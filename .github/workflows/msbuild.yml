@@ -1,0 +1,109 @@
+name: Build Classic Axis
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v6
+      with:
+        submodules: recursive
+
+    - name: Checkout Plugin-SDK
+      uses: actions/checkout@v6
+      with:
+        repository: 'DK22Pac/plugin-sdk'
+        path: 'plugin-sdk'
+        submodules: recursive
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v3
+
+    - name: Generate and Build Plugin-SDK Libraries
+      shell: cmd
+      run: |
+        cd plugin-sdk
+        set PLUGIN_SDK_DIR=%CD%
+        
+        echo ::group::Generate Plugin-SDK Solution
+        call "tools\generate\Visual Studio.bat"
+        echo ::groupEnd::
+        
+        echo ::group::Build SDK GTA III static lib
+        msbuild plugin.sln /property:Configuration=Release /property:Platform="Mixed Platforms" /target:plugin_iii /m /verbosity:minimal
+        echo ::groupEnd::
+        
+        echo ::group::Build SDK GTA VC static lib
+        msbuild plugin.sln /property:Configuration=Release /property:Platform="Mixed Platforms" /target:plugin_vc /m /verbosity:minimal
+        echo ::groupEnd::
+
+    - name: Set Environment Variables & Create Mock Folders
+      shell: powershell
+      run: |
+        # Create mock script folders so the post-build copy commands don't crash
+        New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\mock_gta3\scripts"
+        New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\mock_gtavc\scripts"
+        
+        # Inject paths into GITHUB_ENV for global MSBuild reference
+        echo "PLUGIN_SDK_DIR=${{ github.workspace }}\plugin-sdk" | Out-File -FilePath $env:GITHUB_ENV -Append
+        echo "GTA_III_DIR=${{ github.workspace }}\mock_gta3" | Out-File -FilePath $env:GITHUB_ENV -Append
+        echo "GTA_VC_DIR=${{ github.workspace }}\mock_gtavc" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+    # 6. Run your root Premake to generate your project files inside project_files/
+    - name: Run Project Premake
+      run: |
+        .\premake5.exe vs2022
+
+    - name: Build Classic Axis (Vice City)
+      continue-on-error: true
+      run: |
+        msbuild project_files/classic-axis.sln /p:Configuration=ReleaseVC /p:Platform=Win32 /m /verbosity:minimal
+
+    - name: Build Classic Axis (GTA III)
+      continue-on-error: true
+      run: |
+        msbuild project_files/classic-axis.sln /p:Configuration=ReleaseIII /p:Platform=Win32 /m /verbosity:minimal
+
+    # 8. Compress each successfully compiled .asi file into its own dedicated zip archive
+    - name: Package Plugins into Individual Zips
+      if: always()
+      shell: powershell
+      run: |
+        if (Test-Path "output/asi") {
+            Get-ChildItem -Path "output/asi" -Filter *.asi | ForEach-Object {
+                $zipName = "output/asi/$($_.BaseName).zip"
+                echo "Archiving $($_.Name) into $zipName..."
+                Compress-Archive -Path $_.FullName -DestinationPath $zipName -Force
+            }
+        }
+
+    # 9. Collect and Upload individual zip files as an Actions Run artifact
+    - name: Upload Finished ASI Plugins Artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ClassicAxis-ASI-Plugins
+        path: |
+          output/asi/*.zip
+
+    # 10. Automatically create a Release and upload individual zip files to the Releases Tab
+    - name: Create GitHub Release
+      if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+      uses: ncipollo/release-action@v1
+      with:
+        artifacts: "output/asi/*.zip"
+        token: ${{ secrets.GITHUB_TOKEN }}
+        tag: ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
+        name: ${{ github.ref_type == 'tag' && github.ref_name || format('Automated Build {0}', github.run_number) }}
+        body: "Automated compiler build for Classic Axis (GTA III, Vice City)."
+        allowUpdates: true
+        draft: false
+        prerelease: false
