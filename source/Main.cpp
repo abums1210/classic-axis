@@ -50,7 +50,14 @@ public:
 public:
     ClassicAxis() {
         settings.Read();
-
+        if (settings.reloadSettings) {
+            plugin::Events::gameProcessEvent += [] {
+                if (settings.reloadSettings != 0) {
+                    if (settings.reloadSettings == -1 || plugin::KeyPressed(settings.reloadSettings))
+                        settings.Read();
+                }
+                };
+        }
         plugin::Events::initRwEvent += [&] {
             GInput_Load(&pXboxPad);
 
