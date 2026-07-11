@@ -1,4 +1,4 @@
-﻿#include "plugin.h"
+#include "plugin.h"
 
 #include "CPad.h"
 #include "CGeneral.h"
@@ -514,7 +514,10 @@ public:
 
         // Fix aiming direction
         auto find3rdPersonCamTargetVector = [](CCamera* camera, int, float dist, CVector pos, CVector& source, CVector& target) {
-            CCam* cam = &camera->m_asCams[camera->m_nActiveCam];
+            CCam* cam;
+            float fov, x, y;
+
+            cam = &camera->m_asCams[camera->m_nActiveCam];
 
             if (CPad::GetPad(0)->GetLookBehindForPed()) {
                 source = pos;
@@ -523,14 +526,13 @@ public:
                 return false;
             }
             else {
-                // float fov = tan(CDraw::ms_fFOV * 0.5f * (M_PI / 180.0f));
-                // float x = fov * (camera->m_f3rdPersonCHairMultX - 0.5f + camera->m_f3rdPersonCHairMultX - 0.5f);
-                // float y = fov * (0.5f - camera->m_f3rdPersonCHairMultY + 0.5f - camera->m_f3rdPersonCHairMultY);
-                // y *= (3.0f / 4.0f) * (4.0f / 3.0f) / GetAspectRatio();
-                float fov = tan(CDraw::ms_fFOV * 0.5f * (M_PI / 180.0f));
-                float x = fov * 2.0f * (camera->m_f3rdPersonCHairMultX - 0.5f);
-                float y = fov * 2.0f * (0.5f - camera->m_f3rdPersonCHairMultY);
+                // Classic Axis Fix: Scale FOV to support ThirteenAG's Widescreen Fix dynamic scaling
+                fov = tan(CDraw::ms_fFOV * 0.5f * (M_PI / 180.0f));
+                fov *= GetAspectRatio() / (4.0f / 3.0f);
+                x = fov * 2.0f * (camera->m_f3rdPersonCHairMultX - 0.5f);
+                y = fov * 2.0f * (0.5f - camera->m_f3rdPersonCHairMultY);
                 y *= (1.0f / GetAspectRatio());
+
                 source = cam->m_vecSource;
                 target = cam->m_vecFront;
                 target += cam->m_vecUp * y;
@@ -1391,39 +1393,41 @@ public:
         }
 
         if (!isAiming) {
-            //if (wasPointing) {
-            playa->ClearPointGunAt();
-            playa->ClearWeaponTarget();
+            // Classic Axis Fix: Uncommented wasPointing check to prevent clearing targets every frame.
+            if (wasPointing) {
+                playa->ClearPointGunAt();
+                playa->ClearWeaponTarget();
 
-            if (wasCrouching) {
-                if (currentWeapon.m_eWeaponState != WEAPONSTATE_OUT_OF_AMMO && currentWeapon.m_eWeaponState != WEAPONSTATE_RELOADING &&
-                    IsAbleToAim(playa)) {
-                    playa->bCrouchWhenShooting = true;
+                if (wasCrouching) {
+                    if (currentWeapon.m_eWeaponState != WEAPONSTATE_OUT_OF_AMMO && currentWeapon.m_eWeaponState != WEAPONSTATE_RELOADING &&
+                        IsAbleToAim(playa)) {
+                        playa->bCrouchWhenShooting = true;
 #ifdef GTA3
-                    CAnimManager::BlendAnimation(playa->m_pRwClump, ANIM_GROUP_MAN, ANIM_MAN_DUCK_DOWN, 4.0f);
-                    SetDuck(playa);
+                        CAnimManager::BlendAnimation(playa->m_pRwClump, ANIM_GROUP_MAN, ANIM_MAN_DUCK_DOWN, 4.0f);
+                        SetDuck(playa);
 #else
-                    CAnimManager::BlendAnimation(playa->m_pRwClump, ANIM_GROUP_MAN, ANIM_MAN_WEAPON_CROUCH, 4.0f);
-                    playa->SetDuck(60000, 1);
+                        CAnimManager::BlendAnimation(playa->m_pRwClump, ANIM_GROUP_MAN, ANIM_MAN_WEAPON_CROUCH, 4.0f);
+                        playa->SetDuck(60000, 1);
+#endif
+                    }
+                    wasCrouching = false;
+
+#ifdef GTA3
+                    playa->RestorePreviousState();
 #endif
                 }
-                wasCrouching = false;
 
-#ifdef GTA3
-                playa->RestorePreviousState();
-#endif
-            }
-
-            if (mode != previousCamMode && !pad->DisablePlayerControls && playa->IsPedInControl()) {
-                TheCamera.TakeControl(FindPlayerPed(), previousCamMode, 1, 0);
-                TheCamera.m_bLookingAtPlayer = true;
-                switchTransitionSpeed = true;
-                previousHorAngle = cam.m_fHorizontalAngle;
-                previousVerAngle = cam.m_fVerticalAngle;
-                previousCamMode = mode;
+                if (mode != previousCamMode && !pad->DisablePlayerControls && playa->IsPedInControl()) {
+                    TheCamera.TakeControl(FindPlayerPed(), previousCamMode, 1, 0);
+                    TheCamera.m_bLookingAtPlayer = true;
+                    switchTransitionSpeed = true;
+                    previousHorAngle = cam.m_fHorizontalAngle;
+                    previousVerAngle = cam.m_fVerticalAngle;
+                    previousCamMode = mode;
+                }
+                // Classic Axis Fix: Moved wasPointing = false out of the camera mode check so it is always cleared.
                 wasPointing = false;
             }
-            //}
         }
 
         if (playa->m_ePedState == PEDSTATE_ATTACK && IsAbleToAim(playa) && ((IsTypeTwoHanded(playa) && !IsTypeMelee(playa) && mode == MODE_FOLLOW_PED))) {
@@ -1462,10 +1466,18 @@ public:
     }
 
     static float Find3rdPersonQuickAimPitch(float y) {
-        CCam* cam = &TheCamera.m_asCams[TheCamera.m_nActiveCam];
+        CCam* cam;
+        float fov;
+
+        cam = &TheCamera.m_asCams[TheCamera.m_nActiveCam];
+
+        // Classic Axis Fix: Scale FOV to support ThirteenAG's Widescreen Fix dynamic scaling
+        fov = tan(cam->m_fFOV * 0.5 * 0.01403292f);
+        fov *= GetAspectRatio() / (4.0f / 3.0f);
+
         return -(atan2(
-            tan(cam->m_fFOV * 0.5 * 0.01403292f)
-            * (0.5 - TheCamera.m_f3rdPersonCHairMultY + 0.5 - TheCamera.m_f3rdPersonCHairMultY)
+            fov
+            * (1.0f - 2.0f * TheCamera.m_f3rdPersonCHairMultY)
             * (1.0 / GetAspectRatio()),
             1.0)
             + cam->m_fVerticalAngle);
