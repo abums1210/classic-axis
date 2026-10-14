@@ -2,9 +2,14 @@ name: Build Classic Axis
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "master", "main" ]
+    tags:
+      - 'v*'
+      - 'ver*'
+      - '*.*.*'
+      - '**'
   pull_request:
-    branches: [ "main" ]
+    branches: [ "master", "main" ]
   workflow_dispatch:
 
 jobs:
@@ -20,7 +25,7 @@ jobs:
     - name: Checkout Plugin-SDK
       uses: actions/checkout@v6
       with:
-        repository: 'DK22Pac/plugin-sdk'
+        repository: 'abums1210/plugin-sdk'
         path: 'plugin-sdk'
         submodules: recursive
 
@@ -37,12 +42,19 @@ jobs:
         call "tools\generate\Visual Studio.bat"
         echo ::groupEnd::
         
+        set "SLN_FILE=plugin.sln"
+        if exist "plugin.slnx" set "SLN_FILE=plugin.slnx"
+
         echo ::group::Build SDK GTA III static lib
-        msbuild plugin.sln /property:Configuration=Release /property:Platform="Mixed Platforms" /target:plugin_iii /m /verbosity:minimal
+        msbuild %SLN_FILE% /property:Configuration=Release /property:Platform="Mixed Platforms" /target:plugin_iii /m /verbosity:minimal
         echo ::groupEnd::
         
         echo ::group::Build SDK GTA VC static lib
-        msbuild plugin.sln /property:Configuration=Release /property:Platform="Mixed Platforms" /target:plugin_vc /m /verbosity:minimal
+        msbuild %SLN_FILE% /property:Configuration=Release /property:Platform="Mixed Platforms" /target:plugin_vc /m /verbosity:minimal
+        echo ::groupEnd::
+
+        echo ::group::Build SDK GTA SA static lib
+        msbuild %SLN_FILE% /property:Configuration=Release /property:Platform="Mixed Platforms" /target:plugin_sa /m /verbosity:minimal
         echo ::groupEnd::
 
     - name: Set Environment Variables & Create Mock Folders
@@ -51,13 +63,15 @@ jobs:
         # Create mock script folders so the post-build copy commands don't crash
         New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\mock_gta3\scripts"
         New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\mock_gtavc\scripts"
+        New-Item -ItemType Directory -Force -Path "${{ github.workspace }}\mock_gtasa\scripts"
         
         # Inject paths into GITHUB_ENV for global MSBuild reference
         echo "PLUGIN_SDK_DIR=${{ github.workspace }}\plugin-sdk" | Out-File -FilePath $env:GITHUB_ENV -Append
         echo "GTA_III_DIR=${{ github.workspace }}\mock_gta3" | Out-File -FilePath $env:GITHUB_ENV -Append
         echo "GTA_VC_DIR=${{ github.workspace }}\mock_gtavc" | Out-File -FilePath $env:GITHUB_ENV -Append
+        echo "GTA_SA_DIR=${{ github.workspace }}\mock_gtasa" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-    # 6. Run your root Premake to generate your project files inside project_files/
+    # Run root Premake to generate project files inside project_files/
     - name: Run Project Premake
       run: |
         .\premake5.exe vs2022
@@ -65,45 +79,79 @@ jobs:
     - name: Build Classic Axis (Vice City)
       continue-on-error: true
       run: |
-        msbuild project_files/classic-axis.sln /p:Configuration=ReleaseVC /p:Platform=Win32 /m /verbosity:minimal
+        msbuild project_files/classic-axis.sln /p:Configuration="ReleaseVC" /p:Platform="Win32" /m /verbosity:minimal
 
     - name: Build Classic Axis (GTA III)
       continue-on-error: true
       run: |
-        msbuild project_files/classic-axis.sln /p:Configuration=ReleaseIII /p:Platform=Win32 /m /verbosity:minimal
+        msbuild project_files/classic-axis.sln /p:Configuration="ReleaseIII" /p:Platform="Win32" /m /verbosity:minimal
 
-    # 8. Compress each successfully compiled .asi file into its own dedicated zip archive
     - name: Package Plugins into Individual Zips
       if: always()
       shell: powershell
       run: |
+        New-Item -ItemType Directory -Force -Path "output/asi"
+        Get-ChildItem -Path "${{ github.workspace }}\mock_gta3\scripts", "${{ github.workspace }}\mock_gtavc\scripts", "${{ github.workspace }}\mock_gtasa\scripts" -Filter *.asi -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination "output/asi\" -Force
+        }
         if (Test-Path "output/asi") {
             Get-ChildItem -Path "output/asi" -Filter *.asi | ForEach-Object {
                 $zipName = "output/asi/$($_.BaseName).zip"
-                echo "Archiving $($_.Name) into $zipName..."
+                Write-Host "Archiving $($_.Name) into $zipName..."
                 Compress-Archive -Path $_.FullName -DestinationPath $zipName -Force
             }
         }
 
-    # 9. Collect and Upload individual zip files as an Actions Run artifact
+    - name: Prepare Release Metadata
+      if: always()
+      shell: powershell
+      run: |
+        $projectName = "ClassicAxis"
+        $ref = '${{ github.ref }}'
+        $refType = '${{ github.ref_type }}'
+        $refName = '${{ github.ref_name }}'
+
+        if ($refType -eq 'tag' -or $ref -like 'refs/tags/*') {
+            $rawTag = if ($refName -and $refName -notlike 'refs/tags/*') { $refName } else { $ref -replace '^refs/tags/', '' }
+            $verNo = $rawTag -replace '^(ver|v)', ''
+            $tagId = if ($rawTag -match '^v\d') { $rawTag } else { "v$verNo" }
+            $name = "$projectName v$verNo"
+            $tagMsg = git tag -l --format='%(contents)' $rawTag
+            if (-not $tagMsg) { $tagMsg = git log -1 --pretty=%B }
+            $body = if ($tagMsg) { ($tagMsg | Out-String).Trim() } else { "Release $rawTag" }
+            $artifactName = "${projectName}_v$verNo"
+        } else {
+            $now = Get-Date
+            $ddmmyyyy_hhmmss = $now.ToString("ddMMyyyy_HHmmss")
+            $dateFormatted = $now.ToString("dd/MM/yyyy") + " at " + $now.ToString("HH:mm:ss")
+            $tagId = "build_$ddmmyyyy_hhmmss"
+            $name = "Build $ddmmyyyy_hhmmss"
+            $body = "Github Actions triggered build on $dateFormatted for manually triggered builds."
+            $artifactName = "${projectName}_$ddmmyyyy_hhmmss"
+        }
+        "RELEASE_TAG=$tagId" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "RELEASE_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "RELEASE_BODY=$body" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "ARTIFACT_NAME=$artifactName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
     - name: Upload Finished ASI Plugins Artifact
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: ClassicAxis-ASI-Plugins
+        name: ${{ env.ARTIFACT_NAME }}
         path: |
           output/asi/*.zip
 
-    # 10. Automatically create a Release and upload individual zip files to the Releases Tab
     - name: Create GitHub Release
-      if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
+      if: always() && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
       uses: ncipollo/release-action@v1
       with:
         artifacts: "output/asi/*.zip"
         token: ${{ secrets.GITHUB_TOKEN }}
-        tag: ${{ github.ref_type == 'tag' && github.ref_name || format('build-{0}', github.run_number) }}
-        name: ${{ github.ref_type == 'tag' && github.ref_name || format('Automated Build {0}', github.run_number) }}
-        body: "Automated compiler build for Classic Axis (GTA III, Vice City)."
+        tag: ${{ env.RELEASE_TAG }}
+        name: ${{ env.RELEASE_NAME }}
+        body: ${{ env.RELEASE_BODY }}
         allowUpdates: true
         draft: false
         prerelease: false
+

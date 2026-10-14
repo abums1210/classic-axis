@@ -4,7 +4,7 @@
 #include "CSprite2d.h"
 
 #define defaultScreenWidth 640.0f
-#define defaultScreenHeight 448.0f
+#define defaultScreenHeight 480.0f
 #define defaultAspectRatio defaultScreenWidth / defaultScreenHeight
 #define flashItem(on, off) (CTimer::m_snTimeInMillisecondsPauseMode % on + off < on)
 #define interpF(a, b, f) a = a + (f) * (b - a)
@@ -21,14 +21,10 @@ static float RadToDeg(float x) {
 }
 
 static float GetAspectRatio() {
-#ifdef GTA3
-    float& fScreenAspectRatio = *(float*)0x5F53C0;
-    if (!(*(bool*)0x95CD23))
-        return *(float*)0x5F53C4;
-#else
-    float& fScreenAspectRatio = *(float*)0x94DD38;
-#endif
-    return fScreenAspectRatio;
+    // Dynamic calculation from screen resolution
+    if (RsGlobal.screenHeight > 0)
+        return static_cast<float>(RsGlobal.screenWidth) / static_cast<float>(RsGlobal.screenHeight);
+    return 4.0f / 3.0f;
 }
 
 static float ScaleX(float a) {
