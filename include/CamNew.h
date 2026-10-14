@@ -1,5 +1,7 @@
 #pragma once
 #include "CCam.h"
+#include <vector>
+#include <memory>
 
 #define GINPUT_COMPILE_CROSSCOMPATIBLE_VERSION
 #include "GInputAPI.h"

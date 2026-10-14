@@ -16,11 +16,13 @@ project "classic-axis"
     cppdialect "C++latest"
 
 	files {
-		"source/**.*",
+		"include/**.*",
+		"src/**.*",
 	}
 	
 	includedirs { 
-		"source/**",
+		"include",
+		"src",
 		"vendor/**"
 	}
 	

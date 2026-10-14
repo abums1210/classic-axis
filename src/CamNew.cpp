@@ -10,15 +10,14 @@
 #include "CWeaponInfo.h"
 #include "cBuoyancy.h"
 
-#include "Settings.h"
-
+#include "Configs.h"
 #include "CamNew.h"
 #include "Utility.h"
 
 using namespace plugin;
 
-float previousHorAngle;
-float previousVerAngle;
+float previousHorAngle = 0.0f;
+float previousVerAngle = 0.0f;
 bool camUseCurrentAngle = false;
 class IGInputPad* pXboxPad = nullptr;
 
@@ -50,31 +49,38 @@ CCamNew::~CCamNew() {
 }
 
 void CCamNew::Process_FollowPed(CVector const& target, float targetOrient, float, float) {
+    CPed* e;
+    CPad* pad;
+    const float minDist = 2.0f;
+    const float heightOffset = 0.4f;
+    float maxDist, length, lookLeftRight, lookUpDown, mouseX, mouseY;
+    float betaOffset, alphaOffset, deltaBeta;
+    bool usingController, lockMovement, mouseInput;
+    CVector dist;
+
     if (!cam)
         return;
 
     if (!cam->m_pCamTargetEntity || cam->m_pCamTargetEntity->m_nType != ENTITY_TYPE_PED)
         return;
 
-    CPed* e = static_cast<CPed*>(cam->m_pCamTargetEntity);
+    e = static_cast<CPed*>(cam->m_pCamTargetEntity);
 
-    if (settings.zoomForAssaultRifles)
+    if (configs.zoomForAssaultRifles)
         Process_FOVLerp();
     else
-        cam->m_fFOV = settings.modernCamera ? maxFOVModern : maxFOV;
+        cam->m_fFOV = configs.modernCamera ? maxFOVModern : maxFOV;
 
-    const float minDist = 2.0f;
 #ifdef GTA3
-    const float maxDist = minDist + TheCamera.m_fPedZoomValueSmooth;
+    maxDist = minDist + TheCamera.m_fPedZoomValueSmooth;
 #else
-    const float maxDist = minDist + TheCamera.m_fPedZoomValueScript;
+    maxDist = minDist + TheCamera.m_fPedZoomValueScript;
 #endif
-    const float heightOffset = 0.4f;
-    const bool usingController = pXboxPad->HasPadInHands();
+    usingController = pXboxPad->HasPadInHands();
 
     targetCoords = target;
 
-    if (settings.modernCamera) {
+    if (configs.modernCamera) {
         targetCoords += TheCamera.GetRight() * -0.25f;
         targetCoords += TheCamera.GetUp() * 0.075f;
     }
@@ -85,7 +91,7 @@ void CCamNew::Process_FollowPed(CVector const& target, float targetOrient, float
     targetCoords.z += heightOffset;
     targetCoords.z += duckOffset;
 
-    CVector dist = cam->m_vecSource - targetCoords;
+    dist = cam->m_vecSource - targetCoords;
 
     if (cam->m_bResetStatics) {
         cam->m_fHorizontalAngle = CGeneral::GetATanOfXY(-dist.x, -dist.y);
@@ -97,7 +103,7 @@ void CCamNew::Process_FollowPed(CVector const& target, float targetOrient, float
         cam->m_bResetStatics = false;
     }
 
-    float length = dist.Magnitude();
+    length = dist.Magnitude();
     if (previousPedZoomIndicator != maxDist) {
         dist *= maxDist / length;
         previousPedZoomIndicator = maxDist;
@@ -113,7 +119,7 @@ void CCamNew::Process_FollowPed(CVector const& target, float targetOrient, float
 
     length = dist.Magnitude();
 
-    bool lockMovement = false;
+    lockMovement = false;
     if (usingController && TheCamera.m_nTransitionState == 0) {
         if (cam->m_fVerticalAngle > -DegToRad(85.0f))
             cam->m_fHorizontalAngle = CGeneral::GetATanOfXY(-dist.x, -dist.y);
@@ -125,14 +131,14 @@ void CCamNew::Process_FollowPed(CVector const& target, float targetOrient, float
     while (cam->m_fVerticalAngle >= M_PI) cam->m_fVerticalAngle -= 2.0f * M_PI;
     while (cam->m_fVerticalAngle < -M_PI) cam->m_fVerticalAngle += 2.0f * M_PI;
 
-    CPad* pad = CPad::GetPad(0);
+    pad = CPad::GetPad(0);
     if (pad->DisablePlayerControls)
         lockMovement = true;
-    float lookLeftRight = -pad->NewState.RightStickX;//-pad->LookAroundLeftRight();
-    float lookUpDown = -pad->NewState.RightStickY; //pad->LookAroundUpDown();
-    float mouseX = pad->NewMouseControllerState.x;
-    float mouseY = pad->NewMouseControllerState.y;
-    bool mouseInput = false;
+    lookLeftRight = -pad->NewState.RightStickX;
+    lookUpDown = -pad->NewState.RightStickY;
+    mouseX = pad->NewMouseControllerState.x;
+    mouseY = pad->NewMouseControllerState.y;
+    mouseInput = false;
 
     if (mouseX != 0.0f || mouseY != 0.0f) {
         mouseInput = true;
@@ -140,10 +146,10 @@ void CCamNew::Process_FollowPed(CVector const& target, float targetOrient, float
         lookUpDown = 4.0f * mouseY;
     }
 
-    float betaOffset = lookLeftRight * 0.01f * (1.0f / 20.0f) * cam->m_fFOV / 80.0f * CTimer::ms_fTimeStep;
-    float alphaOffset = lookUpDown * 0.01f * (0.6f / 20.0f) * cam->m_fFOV / 80.0f * CTimer::ms_fTimeStep;
-    betaOffset *= settings.rightAnalogStickSensitivityX;
-    alphaOffset *= settings.rightAnalogStickSensitivityY;
+    betaOffset = lookLeftRight * 0.01f * (1.0f / 20.0f) * cam->m_fFOV / 80.0f * CTimer::ms_fTimeStep;
+    alphaOffset = lookUpDown * 0.01f * (0.6f / 20.0f) * cam->m_fFOV / 80.0f * CTimer::ms_fTimeStep;
+    betaOffset *= configs.rightAnalogStickSensitivityX;
+    alphaOffset *= configs.rightAnalogStickSensitivityY;
 
     if (mouseInput) {
         betaOffset = lookLeftRight * TheCamera.m_fMouseAccelHorzntal * cam->m_fFOV / 80.0f;
@@ -177,7 +183,7 @@ void CCamNew::Process_FollowPed(CVector const& target, float targetOrient, float
 
     if (cam->m_bRotating) {
         WellBufferMe(cam->m_fTargetBeta, &cam->m_fHorizontalAngle, &cam->m_fBetaSpeed, 0.1f, 0.06f, true);
-        float deltaBeta = cam->m_fTargetBeta - cam->m_fHorizontalAngle;
+        deltaBeta = cam->m_fTargetBeta - cam->m_fHorizontalAngle;
         while (deltaBeta >= M_PI) deltaBeta -= 2 * M_PI;
         while (deltaBeta < -M_PI) deltaBeta += 2 * M_PI;
         if (abs(deltaBeta) < 0.06f)
@@ -239,6 +245,18 @@ void CCamNew::Process_FollowPed(CVector const& target, float targetOrient, float
 }
 
 void CCamNew::Process_AimWeapon(CVector const& target, float targetOrient, float, float) {
+    CPlayerPed* e;
+    CPad* pad;
+    CEntity* entity;
+    CEntity* p;
+    CColPoint colPoint;
+    const float maxDist = 2.7f;
+    const float heightOffset = 0.25f;
+    float length, viewPlaneHeight, viewPlaneWidth, horShift, verShift;
+    float lookLeftRight, lookUpDown, mouseX, mouseY, betaOffset, alphaOffset;
+    bool lockMovement, mouseInput;
+    CVector aimOffset, vec, dist, targetPos, distfromTarget, distFromCamEntity;
+
     if (!cam)
         return;
 
@@ -246,31 +264,23 @@ void CCamNew::Process_AimWeapon(CVector const& target, float targetOrient, float
         return;
 
     doFovChanges = true;
-    if (settings.zoomForAssaultRifles)
+    if (configs.zoomForAssaultRifles)
         Process_FOVLerp();
     else
-        cam->m_fFOV = settings.modernCamera ? maxFOVModern : maxFOV;
+        cam->m_fFOV = configs.modernCamera ? maxFOVModern : maxFOV;
 
-    CPlayerPed* e = static_cast<CPlayerPed*>(cam->m_pCamTargetEntity);
+    e = static_cast<CPlayerPed*>(cam->m_pCamTargetEntity);
+    length = maxDist;
+    entity = NULL;
 
-    const float maxDist = 2.7f;
-    const float heightOffset = 0.25f;
-    float length = maxDist;
-
-    CVector aimOffset;
-    
-    if (settings.storiesAimingCoords)
+    if (configs.storiesAimingCoords)
         aimOffset = CVector(0.55f, 0.0f, 0.0f);
     else
         aimOffset = CVector(0.2f, 0.0f, 0.0f);
 
-
     CMatrix& mat = e->GetMatrix();
-    CVector vec = TransformFromObjectSpace(mat, e->GetHeading(), aimOffset);
+    vec = TransformFromObjectSpace(mat, e->GetHeading(), aimOffset);
     targetCoords = vec;
-
-    CEntity* entity = NULL;
-    CColPoint colPoint;
 
     if (CWorld::ProcessLineOfSight(targetCoords, cam->m_vecSource, colPoint, entity, true, false, false, true, false, true, true
 #ifndef GTA3
@@ -287,19 +297,19 @@ void CCamNew::Process_AimWeapon(CVector const& target, float targetOrient, float
     targetCoords.z += heightOffset;
     targetCoords.z += duckOffset;
 
-    CVector dist = cam->m_vecSource - targetCoords;
+    dist = cam->m_vecSource - targetCoords;
 
-    bool lockMovement = false;
-    CEntity* p = e->m_pPointGunAt;
+    lockMovement = false;
+    p = e->m_pPointGunAt;
     if (e->m_bHasLockOnTarget && !cam->m_bLookingBehind && p) {
-        CVector target = p->GetPosition();
-        CVector distfromTarget = (cam->m_vecSource - target);
-        CVector distFromCamEntity = (e->GetPosition() - target);
-        float viewPlaneHeight = tan(DegToRad(cam->m_fFOV) * 0.5f);
-        float viewPlaneWidth = viewPlaneHeight * GetAspectRatio() * 1.05f;
+        targetPos = p->GetPosition();
+        distfromTarget = (cam->m_vecSource - targetPos);
+        distFromCamEntity = (e->GetPosition() - targetPos);
+        viewPlaneHeight = tan(DegToRad(cam->m_fFOV) * 0.5f);
+        viewPlaneWidth = viewPlaneHeight * GetAspectRatio() * 1.05f;
 
-        float horShift = CGeneral::GetATanOfXY(1.0f, (TheCamera.m_f3rdPersonCHairMultX - 0.5f + TheCamera.m_f3rdPersonCHairMultX - 0.5f) * viewPlaneWidth);
-        float verShift = CGeneral::GetATanOfXY(1.0f, (viewPlaneHeight * 0.0174f) * ((0.5f - TheCamera.m_f3rdPersonCHairMultY + 0.5f - TheCamera.m_f3rdPersonCHairMultY) * (1.0f / GetAspectRatio())));
+        horShift = CGeneral::GetATanOfXY(1.0f, (TheCamera.m_f3rdPersonCHairMultX - 0.5f + TheCamera.m_f3rdPersonCHairMultX - 0.5f) * viewPlaneWidth);
+        verShift = CGeneral::GetATanOfXY(1.0f, (viewPlaneHeight * 0.0174f) * ((0.5f - TheCamera.m_f3rdPersonCHairMultY + 0.5f - TheCamera.m_f3rdPersonCHairMultY) * (1.0f / GetAspectRatio())));
         cam->m_fHorizontalAngle = e->m_fHeadingCurrent + (M_PI * 0.5f) + horShift;
         cam->m_fVerticalAngle = CGeneral::GetATanOfXY(Magnitude2d(distfromTarget), -distfromTarget.z) - verShift;
 
@@ -311,14 +321,14 @@ void CCamNew::Process_AimWeapon(CVector const& target, float targetOrient, float
     while (cam->m_fVerticalAngle >= M_PI) cam->m_fVerticalAngle -= 2.0f * M_PI;
     while (cam->m_fVerticalAngle < -M_PI) cam->m_fVerticalAngle += 2.0f * M_PI;
 
-    CPad* pad = CPad::GetPad(0);
+    pad = CPad::GetPad(0);
     if (pad->DisablePlayerControls)
         lockMovement = true;
-    float lookLeftRight = -pad->NewState.RightStickX;//-pad->LookAroundLeftRight();
-    float lookUpDown = -pad->NewState.RightStickY; //pad->LookAroundUpDown();
-    float mouseX = pad->NewMouseControllerState.x;
-    float mouseY = pad->NewMouseControllerState.y;
-    bool mouseInput = false;
+    lookLeftRight = -pad->NewState.RightStickX;
+    lookUpDown = -pad->NewState.RightStickY;
+    mouseX = pad->NewMouseControllerState.x;
+    mouseY = pad->NewMouseControllerState.y;
+    mouseInput = false;
 
     if (mouseX != 0.0f || mouseY != 0.0f) {
         mouseInput = true;
@@ -326,10 +336,10 @@ void CCamNew::Process_AimWeapon(CVector const& target, float targetOrient, float
         lookUpDown = 4.0f * mouseY;
     }
 
-    float betaOffset = lookLeftRight * 0.01f * (1.0f / 20.0f) * cam->m_fFOV / 80.0f * CTimer::ms_fTimeStep;
-    float alphaOffset = lookUpDown * 0.01f * (0.6f / 20.0f) * cam->m_fFOV / 80.0f * CTimer::ms_fTimeStep;
-    betaOffset *= settings.rightAnalogStickSensitivityX;
-    alphaOffset *= settings.rightAnalogStickSensitivityY;
+    betaOffset = lookLeftRight * 0.01f * (1.0f / 20.0f) * cam->m_fFOV / 80.0f * CTimer::ms_fTimeStep;
+    alphaOffset = lookUpDown * 0.01f * (0.6f / 20.0f) * cam->m_fFOV / 80.0f * CTimer::ms_fTimeStep;
+    betaOffset *= configs.rightAnalogStickSensitivityX;
+    alphaOffset *= configs.rightAnalogStickSensitivityY;
 
     if (mouseInput) {
         betaOffset = lookLeftRight * TheCamera.m_fMouseAccelHorzntal * cam->m_fFOV / 80.0f;
@@ -394,6 +404,10 @@ void CCamNew::Process_AimWeapon(CVector const& target, float targetOrient, float
 void CCamNew::Process_AvoidCollisions(float length) {
     CColPoint colPoint = {};
     CEntity* entity = NULL;
+    float distFromPoint, viewPlaneHeight, viewPlaneWidth, nearClip, radius, frontDist, dist;
+    int i;
+    bool isTypePed;
+    CVector center, distPoint;
 
     CWorld::pIgnoreEntity = cam->m_pCamTargetEntity;
 
@@ -402,29 +416,29 @@ void CCamNew::Process_AvoidCollisions(float length) {
         , false
 #endif
     )) {
-        float distFromPoint = (targetCoords - colPoint.m_vecPoint).Magnitude();
+        distFromPoint = (targetCoords - colPoint.m_vecPoint).Magnitude();
         cam->m_vecSource = colPoint.m_vecPoint;
         if (distFromPoint < 1.3f)
             RwCameraSetNearClipPlane(Scene.m_pCamera, std::max(distFromPoint - 0.3f, 0.05f));
     }
 
-    float viewPlaneHeight = tan(DegToRad(cam->m_fFOV) * 0.5f);
-    float viewPlaneWidth = viewPlaneHeight * GetAspectRatio() * 1.05f;
+    viewPlaneHeight = tan(DegToRad(cam->m_fFOV) * 0.5f);
+    viewPlaneWidth = viewPlaneHeight * GetAspectRatio() * 1.05f;
 
     CWorld::pIgnoreEntity = NULL;
-    for (int i = 0; i < 5; i++) {
+    for (i = 0; i < 5; i++) {
         if (vecEntities[i]) {
             vecEntities[i]->bIsVisible = true;
             vecEntities[i] = NULL;
         }
 
-        float nearClip = RwCameraGetNearClipPlane(Scene.m_pCamera);
-        float radius = (viewPlaneWidth * nearClip);
-        CVector center = cam->m_vecSource + cam->m_vecFront * nearClip;
+        nearClip = RwCameraGetNearClipPlane(Scene.m_pCamera);
+        radius = (viewPlaneWidth * nearClip);
+        center = cam->m_vecSource + cam->m_vecFront * nearClip;
         if (entity = CWorld::TestSphereAgainstWorld(center, radius, NULL, true, true, true, true, false, true)) {
             // FIX: skip if entity has NULL vftable (object exists but not constructed - crashes virtual calls below)
             if (!entity || *reinterpret_cast<void**>(entity) == nullptr) continue;
-            bool isTypePed = entity->m_nType == ENTITY_TYPE_PED;
+            isTypePed = entity->m_nType == ENTITY_TYPE_PED;
 
             if (isTypePed && entity->IsVisible() && Magnitude2d((center - entity->GetPosition())) < 0.5f) {
                 if (TheCamera.m_nTransitionState == 0) {
@@ -433,9 +447,9 @@ void CCamNew::Process_AvoidCollisions(float length) {
                 }
             }
             else if (!isTypePed) {
-                CVector distFromPoint = gaTempSphereColPoints[0].m_vecPoint - targetCoords;
-                float frontDist = DotProduct(distFromPoint, cam->m_vecFront);
-                float dist = (distFromPoint - cam->m_vecFront * frontDist).Magnitude() / viewPlaneWidth;
+                distPoint = gaTempSphereColPoints[0].m_vecPoint - targetCoords;
+                frontDist = DotProduct(distPoint, cam->m_vecFront);
+                dist = (distPoint - cam->m_vecFront * frontDist).Magnitude() / viewPlaneWidth;
 
                 dist = std::max(std::min(nearClip, dist), 0.1f);
                 if (dist < nearClip)
@@ -449,12 +463,14 @@ void CCamNew::Process_AvoidCollisions(float length) {
 }
 
 void CCamNew::Process_CrouchOffset(float& offset) {
-    CPed* e = static_cast<CPed*>(cam->m_pCamTargetEntity);
+    CPed* e;
+    float end, f;
 
-    float end = 0.0f;
+    e = static_cast<CPed*>(cam->m_pCamTargetEntity);
+    end = 0.0f;
+
     if (e->bIsDucking) {
-        float f = settings.modernCamera ? maxFOVModern : maxFOV;
-
+        f = configs.modernCamera ? maxFOVModern : maxFOV;
         end = -0.5f;
         end += ((f - cam->m_fFOV) / minFOV * (f)) / 100.0f;
     }
@@ -463,10 +479,11 @@ void CCamNew::Process_CrouchOffset(float& offset) {
 }
 
 void CCamNew::GetVectorsReadyForRW() {
+    CVector right;
+
     if (!cam)
         return;
 
-    CVector right;
     cam->m_vecUp = CVector(0.0f, 0.0f, 1.0f);
     cam->m_vecFront.Normalize();
     if (cam->m_vecFront.x == 0.0f && cam->m_vecFront.y == 0.0f) {
@@ -479,10 +496,17 @@ void CCamNew::GetVectorsReadyForRW() {
 }
 
 void CCamNew::Process_FOVLerp() {
-    CPed* e = static_cast<CPed*>(cam->m_pCamTargetEntity);
-    const eWeaponType weaponType = e->m_aWeapons[e->m_nCurrentWeapon].m_eWeaponType;
-    CWeaponInfo* info = CWeaponInfo::GetWeaponInfo(weaponType);
-    bool changeFov = true;
+    CPed* e;
+    eWeaponType weaponType;
+    CWeaponInfo* info;
+    bool changeFov;
+    float f;
+
+    e = static_cast<CPed*>(cam->m_pCamTargetEntity);
+    weaponType = e->m_aWeapons[e->m_nCurrentWeapon].m_eWeaponType;
+    info = CWeaponInfo::GetWeaponInfo(weaponType);
+    changeFov = true;
+
     if (TheCamera.m_nTransitionState == 0) {
 #ifdef GTAVC
         if (weaponType == WEAPONTYPE_MINIGUN)
@@ -492,7 +516,7 @@ void CCamNew::Process_FOVLerp() {
             fovLerp = interpF(fovLerp, minFOV, 0.1f * CTimer::ms_fTimeStep);
         }
         else {
-            float f = settings.modernCamera ? maxFOVModern : maxFOV;
+            f = configs.modernCamera ? maxFOVModern : maxFOV;
             fovLerp = interpF(fovLerp, f, 0.1f * CTimer::ms_fTimeStep);
         }
     }
