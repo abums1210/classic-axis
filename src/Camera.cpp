@@ -24,12 +24,12 @@ void Camera::Clear() {
     modeBeforeAim = CamNew->cam->m_nCamMode;
 }
 
-void Camera::ProcessFollowPedWithMouse(CCam* cam, int, CVector const& target, float targetOrient, float, float) {
+void __fastcall Camera::ProcessFollowPedWithMouse(CCam* cam, int, CVector const& target, float targetOrient, float, float) {
     if (CamNew)
         CamNew->Process_FollowPed(target, targetOrient, 0.0f, 0.0f);
 }
 
-int Camera::GetPlayerMovementType(int, int) {
+int __fastcall Camera::GetPlayerMovementType(int, int) {
     int moveType = TYPE_WALKAROUND;
 
     if (Aiming::forceWalkaroundAnim) {
@@ -43,7 +43,7 @@ int Camera::GetPlayerMovementType(int, int) {
     return moveType;
 }
 
-int Camera::GetPlayerShootingDirection(int, int) {
+int __fastcall Camera::GetPlayerShootingDirection(int, int) {
     int moveType = TYPE_WALKAROUND;
 
     if (Aiming::isAiming && !CWorld::Players[CWorld::PlayerInFocus].m_pPed->m_bHasLockOnTarget)
@@ -66,7 +66,7 @@ void Camera::OnFiringAfter(CWeapon*, CEntity*, CVector*) {
     }
 }
 
-bool Camera::DisableNative3rdPersonCam(CCam*, int) {
+bool __fastcall Camera::DisableNative3rdPersonCam(CCam*, int) {
     return false;
 }
 
@@ -110,7 +110,7 @@ void Camera::OnProcessingCam(CCam* cam) {
     }
 }
 
-void Camera::CamControl(int, int) {
+void __fastcall Camera::CamControl(int, int) {
     TheCamera.m_bUseMouse3rdPerson = true;
     FrontEndMenuManager.m_nControlMethod = 0;
     TheCamera.m_f3rdPersonCHairMultX = configs.cameraCrosshairMultX;
@@ -147,7 +147,7 @@ float Camera::Find3rdPersonQuickAimPitch(float y) {
         + cam->m_fVerticalAngle);
 }
 
-bool Camera::Find3rdPersonCamTargetVector(CCamera* camera, int, float dist, CVector pos, CVector& source, CVector& target) {
+bool __fastcall Camera::Find3rdPersonCamTargetVector(CCamera* camera, int, float dist, CVector pos, CVector& source, CVector& target) {
     CCam* cam;
     float fov, x, y;
 

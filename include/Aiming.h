@@ -27,17 +27,17 @@ public:
     static void Find3rdPersonMouseTarget(CPlayerPed* ped);
     static void ProcessPlayerPedControl(CPlayerPed* playa);
 
-    static void ProcessWeaponSwitch(CPlayerPed* ped, int, CPad* pad);
+    static void __fastcall ProcessWeaponSwitch(CPlayerPed* ped, int, CPad* pad);
 #ifdef GTA3
-    static bool DoWeaponSmoothSpray(CPlayerPed* ped, int);
+    static bool __fastcall DoWeaponSmoothSpray(CPlayerPed* ped, int);
     static bool CanDuckWithThisWeapon(eWeaponType weapon);
     static void SetDuck(CPlayerPed* ped);
     static void ClearDuck(CPlayerPed* ped);
     static void AdjustWeaponInfoForCrouch(CPlayerPed* ped);
     static void ResetWeaponInfo(CPlayerPed* ped);
 #else
-    static float DoWeaponSmoothSpray(CPlayerPed* ped, int);
-    static void ClearAimFlag(CPed* playa, int);
+    static float __fastcall DoWeaponSmoothSpray(CPlayerPed* ped, int);
+    static void __fastcall ClearAimFlag(CPed* playa, int);
     static void OnDucking(CPed* ped, int, __int16);
     static void OnClearDuck(CPed* ped, char);
     static void OnFindingNewLockOnTarget(CPlayerPed* ped);

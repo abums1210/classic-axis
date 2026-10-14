@@ -537,7 +537,7 @@ void Aiming::ProcessPlayerPedControl(CPlayerPed* player) {
 #endif
 }
 
-void Aiming::ProcessWeaponSwitch(CPlayerPed* ped, int, CPad* pad) {
+void __fastcall Aiming::ProcessWeaponSwitch(CPlayerPed* ped, int, CPad* pad) {
     if (ped != FindPlayerPed())
         return;
 
@@ -546,7 +546,7 @@ void Aiming::ProcessWeaponSwitch(CPlayerPed* ped, int, CPad* pad) {
 }
 
 #ifdef GTA3
-bool Aiming::DoWeaponSmoothSpray(CPlayerPed* ped, int) {
+bool __fastcall Aiming::DoWeaponSmoothSpray(CPlayerPed* ped, int) {
     return ped->bIsDucking;
 }
 
@@ -634,13 +634,13 @@ void Aiming::ResetWeaponInfo(CPlayerPed* ped) {
 }
 
 #else
-float Aiming::DoWeaponSmoothSpray(CPlayerPed* ped, int) {
+float __fastcall Aiming::DoWeaponSmoothSpray(CPlayerPed* ped, int) {
     if (ped->bIsDucking)
         return 0.00001f;
     return -1.0f;
 }
 
-void Aiming::ClearAimFlag(CPed* playa, int) {
+void __fastcall Aiming::ClearAimFlag(CPed* playa, int) {
     if (!isAiming)
         playa->ClearAimFlag();
 }
