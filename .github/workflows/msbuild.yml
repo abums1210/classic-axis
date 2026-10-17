@@ -2,14 +2,14 @@ name: Build Classic Axis
 
 on:
   push:
-    branches: [ "master", "main" ]
+    branches: [ "master", "main", "rewrite" ]
     tags:
       - 'v*'
       - 'ver*'
       - '*.*.*'
       - '**'
   pull_request:
-    branches: [ "master", "main" ]
+    branches: [ "master", "main", "rewrite" ]
   workflow_dispatch:
 
 jobs:
@@ -96,9 +96,18 @@ jobs:
         }
         if (Test-Path "output/asi") {
             Get-ChildItem -Path "output/asi" -Filter *.asi | ForEach-Object {
-                $zipName = "output/asi/$($_.BaseName).zip"
-                Write-Host "Archiving $($_.Name) into $zipName..."
-                Compress-Archive -Path $_.FullName -DestinationPath $zipName -Force
+                $baseName = $_.BaseName
+                $zipName = "output/asi/$baseName.zip"
+                $stageDir = "output/stage/$baseName"
+                New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+                Copy-Item -Path $_.FullName -Destination $stageDir -Force
+                $iniFile = "resources/$baseName.ini"
+                if (Test-Path $iniFile) {
+                    Write-Host "Packaging $iniFile into $zipName..."
+                    Copy-Item -Path $iniFile -Destination $stageDir -Force
+                }
+                Write-Host "Archiving $($_.Name) and associated files into $zipName..."
+                Compress-Archive -Path "$stageDir/*" -DestinationPath $zipName -Force
             }
         }
 
@@ -106,10 +115,11 @@ jobs:
       if: always()
       shell: powershell
       run: |
-        $projectName = "ClassicAxis"
         $ref = '${{ github.ref }}'
         $refType = '${{ github.ref_type }}'
         $refName = '${{ github.ref_name }}'
+        $isRewrite = ($refName -eq 'rewrite' -or $ref -like '*/rewrite')
+        $projectName = if ($isRewrite) { "ClassicAxisRemake" } else { "ClassicAxis" }
 
         if ($refType -eq 'tag' -or $ref -like 'refs/tags/*') {
             $rawTag = if ($refName -and $refName -notlike 'refs/tags/*') { $refName } else { $ref -replace '^refs/tags/', '' }
@@ -124,9 +134,9 @@ jobs:
             $now = Get-Date
             $ddmmyyyy_hhmmss = $now.ToString("ddMMyyyy_HHmmss")
             $dateFormatted = $now.ToString("dd/MM/yyyy") + " at " + $now.ToString("HH:mm:ss")
-            $tagId = "build_$ddmmyyyy_hhmmss"
-            $name = "Build $ddmmyyyy_hhmmss"
-            $body = "Github Actions triggered build on $dateFormatted for manually triggered builds."
+            $tagId = if ($isRewrite) { "remake_$ddmmyyyy_hhmmss" } else { "build_$ddmmyyyy_hhmmss" }
+            $name = "$projectName Build $ddmmyyyy_hhmmss"
+            $body = "Github Actions triggered build on $dateFormatted for branch $($refName)."
             $artifactName = "${projectName}_$ddmmyyyy_hhmmss"
         }
         "RELEASE_TAG=$tagId" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -143,7 +153,7 @@ jobs:
           output/asi/*.zip
 
     - name: Create GitHub Release
-      if: always() && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
+      if: always() && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch' || github.ref_name == 'rewrite')
       uses: ncipollo/release-action@v1
       with:
         artifacts: "output/asi/*.zip"
