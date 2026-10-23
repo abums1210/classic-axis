@@ -1,4 +1,6 @@
 #include "ConfigHelper.h"
+#include "Configs.h"
+#include "Crosshairs.h"
 #include <windows.h>
 #include <stdio.h>
 #include <fstream>
@@ -98,10 +100,86 @@ void ConfigHelper::WriteString(const char* sec, const char* key, const std::stri
     StoreComment(sec, key, comment);
 }
 
+bool ConfigHelper::ReadVector3(const char* sec, const char* key, float& outX, float& outY, float& outZ) {
+    std::string line, clean;
+    size_t i;
+    float x, y, z;
+    int matches;
+
+    line = ReadString(sec, key, "");
+    if (line.empty())
+        return false;
+
+    clean = line;
+    for (i = 0; i < clean.size(); i++) {
+        if (clean[i] == ',')
+            clean[i] = ' ';
+    }
+
+    x = 0.0f;
+    y = 0.0f;
+    z = 0.0f;
+    matches = sscanf(clean.c_str(), " %f %f %f", &x, &y, &z);
+    if (matches == 3) {
+        outX = x;
+        outY = y;
+        outZ = z;
+        return true;
+    }
+    return false;
+}
+
+void ConfigHelper::WriteVector3(const char* sec, const char* key, float x, float y, float z, const char* comment) {
+    char buf[128];
+
+    sprintf_s(buf, "%.8f, %.8f, %.8f", x, y, z);
+    WriteString(sec, key, buf, comment);
+}
+
+bool ConfigHelper::ReadCrosshair(const char* sec, const char* key, CrosshairConfig& target) {
+    std::string line, clean;
+    size_t i;
+    char sprBuf[64];
+    float s, k;
+    int matches;
+
+    line = ReadString(sec, key, "");
+    if (line.empty())
+        return false;
+
+    clean = line;
+    for (i = 0; i < clean.size(); i++) {
+        if (clean[i] == ',')
+            clean[i] = ' ';
+    }
+
+    sprBuf[0] = '\0';
+    s = target.scale;
+    k = target.recoilKick;
+    matches = sscanf(clean.c_str(), " %f %f %63s", &s, &k, sprBuf);
+    if (matches >= 1) {
+        target.scale = s;
+        if (matches >= 2)
+            target.recoilKick = k;
+        if (matches >= 3)
+            target.sprite = Crosshairs::StringToSprite(sprBuf);
+        return true;
+    }
+    return false;
+}
+
+void ConfigHelper::WriteCrosshair(const char* sec, const char* key, const CrosshairConfig& target, const char* comment) {
+    char buf[128];
+
+    sprintf_s(buf, "%.2f,  %.2f,       %s", target.scale, target.recoilKick, Crosshairs::SpriteToString(target.sprite));
+    WriteString(sec, key, buf, comment);
+}
+
 void ConfigHelper::Format(const std::string& headerComments) {
     FILE* f;
     char lineBuffer[1024];
-    std::string outContent, currentSection, line, trimmed, key, compKey;
+    std::string outContent, currentSection, line, trimmed, key, compKey, cmt, cmtLine;
+    std::stringstream ss;
     size_t eqPos, start, end;
 
     f = nullptr;
@@ -147,7 +225,21 @@ void ConfigHelper::Format(const std::string& headerComments) {
 
             compKey = currentSection + "|" + key;
             if (m_comments.find(compKey) != m_comments.end()) {
-                outContent += "; " + m_comments[compKey] + "\n";
+                cmt = m_comments[compKey];
+                ss.clear();
+                ss.str(cmt);
+                while (std::getline(ss, cmtLine)) {
+                    start = cmtLine.find_first_not_of(" \t");
+                    if (start == std::string::npos) {
+                        outContent += ";\n";
+                    }
+                    else if (cmtLine[start] == ';' || cmtLine[start] == '#') {
+                        outContent += cmtLine + "\n";
+                    }
+                    else {
+                        outContent += "; " + cmtLine + "\n";
+                    }
+                }
                 m_comments.erase(compKey);
             }
         }

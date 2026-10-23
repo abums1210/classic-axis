@@ -3,11 +3,14 @@
 #include "Aiming.h"
 #include "Crosshairs.h"
 #include "Configs.h"
+#include "KillEffect.h"
 #include "InputHandler.h"
 #include "CamNew.h"
 
 #include "plugin.h"
 #include "CMenuManager.h"
+#include "CDarkel.h"
+#include "RenderWare.h"
 
 #ifdef GTA3
 static void __fastcall ClearWeaponTargetCallback(CPlayerPed* player, int) {
@@ -23,33 +26,286 @@ static void OnInitRw() {
     Camera::Clear();
     Aiming::Clear();
     Crosshairs::Clear();
+    Crosshairs::InitTextures();
+    KillEffect::Init();
 
 #ifdef GTA3
     Aiming::weaponInfoSet = false;
 #endif
 }
 
+static const bool* pAimingIsAiming = &Aiming::isAiming;
+
+#ifdef GTA3
+static const uintptr_t InflictDamageTarget = 0x4EA426;
+static const uintptr_t RocketAbortTargetIII = 0x4F2032;
+static const uintptr_t RocketContinueTargetIII = 0x4F2038;
+static const uintptr_t RocketNotRocketTargetIII = 0x4F1F69;
+static const uintptr_t RocketSoundPlayTargetIII = 0x4F00CA;
+static const uintptr_t RocketSoundSkipTargetIII = 0x4F00D8;
+
+static __declspec(naked) void RocketFireCheckIII() {
+    __asm {
+        cmp edx, 8
+        jnz not_rocket
+        mov edx, dword ptr [pAimingIsAiming]
+        cmp byte ptr [edx], 0
+        jnz continue_fire
+        jmp dword ptr [RocketAbortTargetIII]
+
+    not_rocket:
+        jmp dword ptr [RocketNotRocketTargetIII]
+
+    continue_fire:
+        jmp dword ptr [RocketContinueTargetIII]
+    }
+}
+
+static __declspec(naked) void RocketSoundCheckIII() {
+    __asm {
+        cmp eax, 8
+        jnz skip_sound
+        mov eax, dword ptr [pAimingIsAiming]
+        cmp byte ptr [eax], 0
+        jnz skip_sound
+        jmp dword ptr [RocketSoundPlayTargetIII]
+
+    skip_sound:
+        jmp dword ptr [RocketSoundSkipTargetIII]
+    }
+}
+#else
+static const uintptr_t InflictDamageTarget = 0x525B26;
+static const uintptr_t RocketAbortTargetVC = 0x534AF3;
+static const uintptr_t RocketContinueTargetVC = 0x534B00;
+static const uintptr_t RocketNotRocketTargetVC = 0x534AE0;
+static const uintptr_t RocketSoundPlayTargetVC = 0x5379BA;
+static const uintptr_t RocketSoundSkipTargetVC = 0x5379C8;
+
+static __declspec(naked) void RocketFireCheckVC() {
+    __asm {
+        cmp ecx, 1Eh
+        jnz not_rocket
+        mov ecx, dword ptr [pAimingIsAiming]
+        cmp byte ptr [ecx], 0
+        jnz continue_fire
+        jmp dword ptr [RocketAbortTargetVC]
+
+    not_rocket:
+        jmp dword ptr [RocketNotRocketTargetVC]
+
+    continue_fire:
+        jmp dword ptr [RocketContinueTargetVC]
+    }
+}
+
+static __declspec(naked) void RocketSoundCheckVC() {
+    __asm {
+        cmp esi, 1Eh
+        jnz skip_sound
+        mov esi, dword ptr [pAimingIsAiming]
+        cmp byte ptr [esi], 0
+        jnz skip_sound
+        jmp dword ptr [RocketSoundPlayTargetVC]
+
+    skip_sound:
+        jmp dword ptr [RocketSoundSkipTargetVC]
+    }
+}
+#endif
+
+#ifdef GTA3
+static const uintptr_t AddrCPedIsPlayer = 0x4D48E0;
+static const uintptr_t FireProjectileNotPlayerTargetIII = 0x5619B7;
+static const uintptr_t FireProjectilePlayerTargetIII = 0x561993;
+static const uintptr_t FireProjectileNormalPlayerTargetIII = 0x56194F;
+
+static __declspec(naked) void FireProjectilePlayerHookIII() {
+    __asm {
+        call dword ptr [AddrCPedIsPlayer]
+        test al, al
+        jz not_player
+        mov eax, dword ptr [pAimingIsAiming]
+        cmp byte ptr [eax], 0
+        jz normal_player
+        movzx eax, byte ptr ds:[0x6FAD6E]
+        imul eax, 1A4h
+        jmp dword ptr [FireProjectilePlayerTargetIII]
+
+    normal_player:
+        jmp dword ptr [FireProjectileNormalPlayerTargetIII]
+
+    not_player:
+        jmp dword ptr [FireProjectileNotPlayerTargetIII]
+    }
+}
+
+#else
+static const uintptr_t AddrCPedIsPlayer = 0x4F4930;
+static const uintptr_t FireProjectileNotPlayerTargetVC = 0x5CD050;
+static const uintptr_t FireProjectilePlayerTargetVC = 0x5CD028;
+static const uintptr_t FireProjectileNormalPlayerTargetVC = 0x5CCFE4;
+
+static __declspec(naked) void FireProjectilePlayerHookVC() {
+    __asm {
+        call dword ptr [AddrCPedIsPlayer]
+        test al, al
+        jz not_player
+        mov ecx, dword ptr [pAimingIsAiming]
+        cmp byte ptr [ecx], 0
+        jz normal_player
+        movzx eax, byte ptr ds:[0x7E46FE]
+        imul eax, 1CCh
+        jmp dword ptr [FireProjectilePlayerTargetVC]
+
+    normal_player:
+        jmp dword ptr [FireProjectileNormalPlayerTargetVC]
+
+    not_player:
+        jmp dword ptr [FireProjectileNotPlayerTargetVC]
+    }
+}
+#endif
+
+static void OnInflictDamageCheck(CPed* victim, CEntity* damagedBy, eWeaponType weaponType, float damage) {
+    CPlayerPed* player;
+    CWeaponInfo* info;
+    bool isKill;
+
+    if (!victim || !damagedBy)
+        return;
+
+    player = FindPlayerPed();
+    if (!player || damagedBy != player || victim == player)
+        return;
+
+    if (!Aiming::IsWeaponPossiblyCompatible(player))
+        return;
+
+    if (!Aiming::isAiming && player->m_ePedState != PEDSTATE_AIMGUN && player->m_ePedState != PEDSTATE_ATTACK)
+        return;
+
+    if (weaponType != player->m_aWeapons[player->m_nCurrentWeapon].m_eWeaponType)
+        return;
+
+    info = CWeaponInfo::GetWeaponInfo(weaponType);
+    if (!info || (!info->m_bCanAim && !info->m_bCanAimWithArm) || info->m_bThrow)
+        return;
+
+    isKill = (victim->m_fHealth - damage <= 0.0f) || (victim->m_ePedState == PEDSTATE_DEAD);
+    Crosshairs::OnPedHit(isKill);
+}
+
+static __declspec(naked) void InflictDamageProxy() {
+    __asm {
+        push eax
+        push ecx
+        push edx
+
+        push dword ptr [esp + 24]
+        push dword ptr [esp + 24]
+        push dword ptr [esp + 24]
+        push ecx
+        call OnInflictDamageCheck
+        add esp, 16
+
+        pop edx
+        pop ecx
+        pop eax
+
+#ifdef GTA3
+        fld dword ptr ds:[0x5F9AB8]
+#else
+        fld dword ptr ds:[0x694170]
+#endif
+        jmp dword ptr [InflictDamageTarget]
+    }
+}
+
+static void HookedRegisterKillByPlayer(CPed* victim, eWeaponType weaponType, bool isHeadshot) {
+    CPlayerPed* player;
+    CWeaponInfo* info;
+
+    player = FindPlayerPed();
+    if (player && victim && victim != player) {
+        if (Aiming::IsWeaponPossiblyCompatible(player)) {
+            if (Aiming::isAiming || player->m_ePedState == PEDSTATE_AIMGUN || player->m_ePedState == PEDSTATE_ATTACK) {
+                if (weaponType == player->m_aWeapons[player->m_nCurrentWeapon].m_eWeaponType) {
+                    info = CWeaponInfo::GetWeaponInfo(weaponType);
+                    if (info && (info->m_bCanAim || info->m_bCanAimWithArm) && !info->m_bThrow) {
+                        Crosshairs::OnPedHit(true);
+                    }
+                }
+            }
+        }
+    }
+
+    CDarkel::RegisterKillByPlayer(victim, weaponType, isHeadshot);
+}
+
+
 static void OnReinitGame() {
     Camera::Clear();
     Aiming::Clear();
     Crosshairs::Clear();
+    KillEffect::Clear();
 }
 
 static void OnGameProcessReload() {
     if (configs.reloadSettings != 0) {
-        if (configs.reloadSettings == -1 || plugin::KeyPressed(configs.reloadSettings))
-            configs.Read();
+        if (configs.reloadSettings == -1 || plugin::KeyPressed(configs.reloadSettings)) {
+            configs.ReadSettings();
+            if (!configs.crosshairFolderPath.empty())
+                configs.ReadCrosshairInfo(configs.crosshairFolderPath);
+        }
     }
 }
 
-#ifdef GTA3
 static void OnGameProcessWeaponInfo() {
+    CWeaponInfo *rifleInfo, *rocketInfo;
+
     if (!Aiming::weaponInfoSet) {
-        memcpy(&Aiming::backupWeaponInfo, aWeaponInfo, sizeof(CWeaponInfo) * WEAPONTYPE_HELICANNON + 1);
+        if (configs.thirdPersonRocketLauncher) {
+#ifdef GTA3
+            rifleInfo = CWeaponInfo::GetWeaponInfo(WEAPONTYPE_M16);
+            rocketInfo = CWeaponInfo::GetWeaponInfo(WEAPONTYPE_ROCKETLAUNCHER);
+            if (rifleInfo && rocketInfo) {
+                rocketInfo->m_nAnimToPlay = rifleInfo->m_nAnimToPlay;
+                rocketInfo->m_fAnimLoopStart = rifleInfo->m_fAnimLoopStart;
+                rocketInfo->m_fAnimLoopEnd = rifleInfo->m_fAnimLoopEnd;
+                rocketInfo->m_fAnimFrameFire = rifleInfo->m_fAnimFrameFire;
+                rocketInfo->m_fAnim2FrameFire = rifleInfo->m_fAnim2FrameFire;
+                rocketInfo->m_bCanAim = 1;
+                rocketInfo->m_bCanAimWithArm = 0;
+                rocketInfo->m_b1stPerson = 0;
+            }
+#else
+            rifleInfo = CWeaponInfo::GetWeaponInfo(WEAPONTYPE_M4);
+            rocketInfo = CWeaponInfo::GetWeaponInfo(WEAPONTYPE_ROCKETLAUNCHER);
+            if (rifleInfo && rocketInfo) {
+                rocketInfo->m_nAnimToPlay = rifleInfo->m_nAnimToPlay;
+                rocketInfo->m_fAnimLoopStart = rifleInfo->m_fAnimLoopStart;
+                rocketInfo->m_fAnimLoopEnd = rifleInfo->m_fAnimLoopEnd;
+                rocketInfo->m_fAnimFrameFire = rifleInfo->m_fAnimFrameFire;
+                rocketInfo->m_fAnim2LoopStart = rifleInfo->m_fAnim2LoopStart;
+                rocketInfo->m_fAnim2LoopEnd = rifleInfo->m_fAnim2LoopEnd;
+                rocketInfo->m_fAnim2FrameFire = rifleInfo->m_fAnim2FrameFire;
+                rocketInfo->m_bCanAim = 1;
+                rocketInfo->m_bCanAimWithArm = 0;
+                rocketInfo->m_b1stPerson = 0;
+            }
+#endif
+        }
+#ifdef GTA3
+        memcpy(&Aiming::backupWeaponInfo, aWeaponInfo, sizeof(CWeaponInfo) * (WEAPONTYPE_HELICANNON + 1));
+#endif
         Aiming::weaponInfoSet = true;
     }
 }
-#endif
+
+static void OnBeforeDrawHud() {
+    KillEffect::Render();
+}
 
 static void OnDrawHud() {
     bool disableAutoAim;
@@ -79,9 +335,7 @@ void Hooks::RegisterCoreEvents() {
 
     onReinitGame.after += OnReinitGame;
 
-#ifdef GTA3
     plugin::Events::gameProcessEvent += OnGameProcessWeaponInfo;
-#endif
 }
 
 void Hooks::ApplyCameraMovementAndStancePatches() {
@@ -116,6 +370,20 @@ void Hooks::ApplyCameraMovementAndStancePatches() {
     plugin::patch::Set<BYTE>(0x5349E5, 0x90);
     plugin::patch::Set<BYTE>(0x5349E5 + 1, 0x90);
 #endif
+
+    // 2b. Fps to 3rd - Rocket Launcher
+    if (configs.thirdPersonRocketLauncher) {
+#ifdef GTA3
+        plugin::patch::RedirectJump(0x4F1F64, RocketFireCheckIII);
+        plugin::patch::RedirectJump(0x4F00C5, RocketSoundCheckIII);
+        plugin::patch::RedirectJump(0x561946, FireProjectilePlayerHookIII);
+#else
+        plugin::patch::SetChar(0x5349C5 + 2, -1);
+        plugin::patch::RedirectJump(0x534ADB, RocketFireCheckVC);
+        plugin::patch::RedirectJump(0x5379B5, RocketSoundCheckVC);
+        plugin::patch::RedirectJump(0x5CCFDB, FireProjectilePlayerHookVC);
+#endif
+    }
 
     // 3. No fight cam
 #ifdef GTA3
@@ -240,6 +508,7 @@ void Hooks::ApplyHudAndMenuPatches() {
 #endif
 
     // 15. drawHudEvent
+    plugin::Events::drawHudEvent.before += OnBeforeDrawHud;
     plugin::Events::drawHudEvent += OnDrawHud;
 
     // 16. Lock on target type
@@ -256,6 +525,17 @@ void Hooks::ApplyHudAndMenuPatches() {
     plugin::patch::Set(0x611930 + sizeof(CMenuScreen) * 35, controllerSetup);
 #else
     plugin::patch::Set(0x6D8B70 + sizeof(CMenuScreen) * MENUPAGE_CONTROLLER_PC, controllerSetup);
+#endif
+
+    // 17b. Inflict damage hook for hit indicator
+#ifdef GTA3
+    plugin::patch::RedirectJump(0x4EA420, InflictDamageProxy);
+    plugin::patch::SetUChar(0x4EA420 + 5, 0x90);
+    plugin::patch::RedirectCall(0x4EAD39, HookedRegisterKillByPlayer);
+#else
+    plugin::patch::RedirectJump(0x525B20, InflictDamageProxy);
+    plugin::patch::SetUChar(0x525B20 + 5, 0x90);
+    plugin::patch::RedirectCall(0x526840, HookedRegisterKillByPlayer);
 #endif
 }
 

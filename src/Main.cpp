@@ -6,7 +6,7 @@
 class ClassicAxis {
 public:
     ClassicAxis() {
-        configs.Read();
+        configs.ReadSettings();
         Hooks::Init();
     }
 } classicAxis;

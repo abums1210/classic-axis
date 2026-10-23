@@ -30,6 +30,8 @@ project "classic-axis"
 		"vendor/GInputAPI",
 		"$(PLUGIN_SDK_DIR)/shared/",
 		"$(PLUGIN_SDK_DIR)/shared/game/",
+		"$(PLUGIN_SDK_DIR)/shared/rwd3d9/",
+		"$(PLUGIN_SDK_DIR)/shared/dxsdk/",
 	}
 	
 	filter { "configurations:*III" }
@@ -62,6 +64,8 @@ project "classic-axis"
 	
 	libdirs { 
 		"$(PLUGIN_SDK_DIR)/output/lib/",
+		"$(PLUGIN_SDK_DIR)/shared/rwd3d9/",
+		"$(PLUGIN_SDK_DIR)/shared/dxsdk/",
 		"$(DXSDK_DIR)/Lib/x86",
 	}
 	
@@ -77,13 +81,13 @@ project "classic-axis"
 		staticruntime "on"
 		
 	filter "configurations:ReleaseVC"
-		links { "plugin_vc" }
+		links { "plugin_vc", "rwd3d9", "d3d9", "d3dx9" }
 	filter "configurations:ReleaseIII"
-		links { "plugin_iii" }
+		links { "plugin_iii", "rwd3d9", "d3d9", "d3dx9" }
 		
 	filter "configurations:DebugVC"
-		links { "plugin_vc_d" }
+		links { "plugin_vc_d", "rwd3d9", "d3d9", "d3dx9" }
 	filter "configurations:DebugIII"
-		links { "plugin_iii_d" }
+		links { "plugin_iii_d", "rwd3d9", "d3d9", "d3dx9" }
 			
 	filter { }

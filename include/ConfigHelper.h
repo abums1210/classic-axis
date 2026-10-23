@@ -4,6 +4,8 @@
 #include <map>
 #include <cstdint>
 
+struct CrosshairConfig;
+
 class ConfigHelper {
 private:
     std::string m_path;
@@ -19,11 +21,16 @@ public:
     bool ReadBool(const char* sec, const char* key, bool def);
     std::string ReadString(const char* sec, const char* key, const std::string& def);
 
+    bool ReadVector3(const char* sec, const char* key, float& outX, float& outY, float& outZ);
+    bool ReadCrosshair(const char* sec, const char* key, CrosshairConfig& target);
+
     void WriteInt(const char* sec, const char* key, int val, const char* comment = nullptr);
     void WriteFloat(const char* sec, const char* key, float val, const char* comment = nullptr);
     void WriteBool(const char* sec, const char* key, bool val, const char* comment = nullptr);
     void WriteString(const char* sec, const char* key, const std::string& val, const char* comment = nullptr);
 
+    void WriteVector3(const char* sec, const char* key, float x, float y, float z, const char* comment = nullptr);
+    void WriteCrosshair(const char* sec, const char* key, const CrosshairConfig& target, const char* comment = nullptr);
     bool Exists();
     void CreateParentFolder();
     void Format(const std::string& headerComments = "");

@@ -26,9 +26,10 @@ bool Aiming::ignoreRotation = false;
 bool Aiming::forceWalkaroundAnim = false;
 CPed* Aiming::thirdPersonMouseTarget = nullptr;
 
+bool Aiming::weaponInfoSet = false;
+
 #ifdef GTA3
 bool Aiming::wantsToResetWeaponInfo = false;
-bool Aiming::weaponInfoSet = false;
 CWeaponInfo Aiming::backupWeaponInfo[WEAPONTYPE_HELICANNON + 1] = {};
 #endif
 
@@ -45,6 +46,100 @@ void Aiming::Clear() {
 #endif
 }
 
+#ifdef GTA3
+static const RwMatrix defaultRocketAimMatrix = {
+    { -0.09544833f, -0.26913081f,  0.95836239f }, rwMATRIXTYPEORTHONORMAL,
+    { -0.13364569f,  0.95750600f,  0.25557954f }, 0,
+    { -0.98642206f, -0.10368632f, -0.12736026f }, 0,
+    {  0.0f,         0.0f,          0.0f         }, 0
+};
+
+RwMatrix Aiming::rocketAimRelativeMatrix = defaultRocketAimMatrix;
+
+void Aiming::UpdateRocketAimAdjustment(float pitch, float yaw, float roll, float offX, float offY, float offZ) {
+    RwV3d axisX, axisY, axisZ, trans;
+
+    rocketAimRelativeMatrix = defaultRocketAimMatrix;
+
+    axisX = { 1.0f, 0.0f, 0.0f };
+    axisY = { 0.0f, 1.0f, 0.0f };
+    axisZ = { 0.0f, 0.0f, 1.0f };
+
+    if (pitch != 0.0f)
+        RwMatrixRotate(&rocketAimRelativeMatrix, &axisX, pitch, rwCOMBINEPRECONCAT);
+    if (yaw != 0.0f)
+        RwMatrixRotate(&rocketAimRelativeMatrix, &axisY, yaw, rwCOMBINEPRECONCAT);
+    if (roll != 0.0f)
+        RwMatrixRotate(&rocketAimRelativeMatrix, &axisZ, roll, rwCOMBINEPRECONCAT);
+
+    if (offX != 0.0f || offY != 0.0f || offZ != 0.0f) {
+        trans = { offX, offY, offZ };
+        RwMatrixTranslate(&rocketAimRelativeMatrix, &trans, rwCOMBINEPRECONCAT);
+    }
+}
+
+static RwObject* GetWeaponAtomicCB(RwObject* object, void* data) {
+    *reinterpret_cast<RpAtomic**>(data) = reinterpret_cast<RpAtomic*>(object);
+    return nullptr;
+}
+
+static RpAtomic* RocketRenderCallback(RpAtomic* atomic) {
+    RwFrame* frame;
+    RwMatrix origLTM;
+
+    frame = RpAtomicGetFrame(atomic);
+    if (Aiming::isAiming && frame) {
+        origLTM = frame->ltm;
+        RwMatrixMultiply(&frame->ltm, &Aiming::rocketAimRelativeMatrix, &origLTM);
+        AtomicDefaultRenderCallBack(atomic);
+        frame->ltm = origLTM;
+    }
+    else {
+        AtomicDefaultRenderCallBack(atomic);
+    }
+    return atomic;
+}
+#endif
+
+static bool IsUnarmedWeapon(eWeaponType weaponType) {
+    if (weaponType == WEAPONTYPE_UNARMED
+#ifdef GTAVC
+        || weaponType == WEAPONTYPE_BRASSKNUCKLE
+#endif
+    )
+        return true;
+    return false;
+}
+
+static void UpdateDuckingWeaponAimInfo(eWeaponType weaponType, CPed* ped, CWeaponInfo* info) {
+    switch (weaponType) {
+        case WEAPONTYPE_FLAMETHROWER:
+#ifndef GTA3
+        case WEAPONTYPE_MINIGUN:
+#endif
+            if (ped->bIsDucking)
+                info->m_bCanAim = false;
+            else
+                info->m_bCanAim = true;
+            break;
+    }
+}
+
+static void SaveCamAnglesAndSetCustomTransition(CCam* cam, int mode) {
+    Camera::customTransitionSpeedPending = true;
+    previousHorAngle = cam->m_fHorizontalAngle;
+    previousVerAngle = cam->m_fVerticalAngle;
+    Camera::modeBeforeAim = mode;
+}
+
+#ifdef GTAVC
+static CWeaponInfo* GetPlayerWeaponInfoIfControlled(CPed* ped) {
+    if (ped != FindPlayerPed())
+        return nullptr;
+    return CWeaponInfo::GetWeaponInfo(ped->m_aWeapons[ped->m_nCurrentWeapon].m_eWeaponType);
+}
+#endif
+
 bool Aiming::IsAbleToAim(CPed* ped) {
     ePedState s;
     eMoveState m;
@@ -55,11 +150,7 @@ bool Aiming::IsAbleToAim(CPed* ped) {
     m = ped->m_eMoveState;
     info = CWeaponInfo::GetWeaponInfo(weaponType);
 
-    if (weaponType == WEAPONTYPE_UNARMED
-#ifdef GTAVC
-        || weaponType == WEAPONTYPE_BRASSKNUCKLE
-#endif
-        )
+    if (IsUnarmedWeapon(weaponType))
         return false;
 
     switch (s) {
@@ -86,11 +177,12 @@ bool Aiming::IsType1stPerson(CPed* ped) {
 
     switch (weaponType) {
         case WEAPONTYPE_SNIPERRIFLE:
-        case WEAPONTYPE_ROCKETLAUNCHER:
 #ifdef GTAVC
         case WEAPONTYPE_LASERSCOPE:
 #endif
             return true;
+        case WEAPONTYPE_ROCKETLAUNCHER:
+            return !configs.thirdPersonRocketLauncher;
     }
 
     return !info->m_bCanAim && !info->m_bCanAimWithArm && info->m_b1stPerson;
@@ -100,24 +192,13 @@ bool Aiming::IsWeaponPossiblyCompatible(CPed* ped) {
     const eWeaponType weaponType = ped->m_aWeapons[ped->m_nCurrentWeapon].m_eWeaponType;
     CWeaponInfo* info = CWeaponInfo::GetWeaponInfo(weaponType);
 
-    if (weaponType == WEAPONTYPE_UNARMED
-#ifdef GTAVC
-        || weaponType == WEAPONTYPE_BRASSKNUCKLE
-#endif
-        )
+    if (IsUnarmedWeapon(weaponType))
         return false;
 
-    switch (weaponType) {
-        case WEAPONTYPE_FLAMETHROWER:
-#ifndef GTA3
-        case WEAPONTYPE_MINIGUN:
-#endif
-            if (ped->bIsDucking)
-                info->m_bCanAim = false;
-            else
-                info->m_bCanAim = true;
-            break;
-    }
+    if (configs.thirdPersonRocketLauncher && weaponType == WEAPONTYPE_ROCKETLAUNCHER)
+        return true;
+
+    UpdateDuckingWeaponAimInfo(weaponType, ped, info);
 
     return (info->m_bCanAim || info->m_bCanAimWithArm) && !info->m_bThrow && !info->m_b1stPerson;
 }
@@ -128,11 +209,7 @@ bool Aiming::IsTypeMelee(CPed* ped) {
     CWeaponInfo* info;
 #endif
 
-    if (weaponType == WEAPONTYPE_UNARMED
-#ifdef GTAVC
-        || weaponType == WEAPONTYPE_BRASSKNUCKLE
-#endif
-        )
+    if (IsUnarmedWeapon(weaponType))
         return true;
 
 #ifdef GTA3
@@ -156,24 +233,13 @@ bool Aiming::IsTypeTwoHanded(CPed* ped) {
     const eWeaponType weaponType = ped->m_aWeapons[ped->m_nCurrentWeapon].m_eWeaponType;
     CWeaponInfo* info = CWeaponInfo::GetWeaponInfo(weaponType);
 
-    if (weaponType == WEAPONTYPE_UNARMED
-#ifdef GTAVC
-        || weaponType == WEAPONTYPE_BRASSKNUCKLE
-#endif
-        )
+    if (IsUnarmedWeapon(weaponType))
         return false;
 
-    switch (weaponType) {
-        case WEAPONTYPE_FLAMETHROWER:
-#ifndef GTA3
-        case WEAPONTYPE_MINIGUN:
-#endif
-            if (ped->bIsDucking)
-                info->m_bCanAim = false;
-            else
-                info->m_bCanAim = true;
-            break;
-    }
+    if (configs.thirdPersonRocketLauncher && weaponType == WEAPONTYPE_ROCKETLAUNCHER)
+        return true;
+
+    UpdateDuckingWeaponAimInfo(weaponType, ped, info);
 
     return (info->m_bCanAim || info->m_bHeavy) && !info->m_bCanAimWithArm && !info->m_b1stPerson;
 }
@@ -272,7 +338,7 @@ void Aiming::ProcessPlayerPedControl(CPlayerPed* player) {
     CAnimBlendAssociation* animRel;
     CAnimBlendAssociation* assoc;
     short mode;
-    float front, height, mouseX, mouseY, torsoPitch;
+    float front, height, mouseX, mouseY, torsoPitch, armPitch;
     eWeaponType weaponType;
     bool hasPadInHands, fastReload, disableAutoAim, transitionDone, point, relState;
     CVector diff;
@@ -282,6 +348,7 @@ void Aiming::ProcessPlayerPedControl(CPlayerPed* player) {
     int animToPlay2, animToPlay, groupId;
     bool duckJustDown;
     CAnimBlendAssociation* animAssoc;
+    RpAtomic* weaponAtomic;
 #else
     int animToPlay2, animToPlay, groupId;
 #endif
@@ -296,6 +363,16 @@ void Aiming::ProcessPlayerPedControl(CPlayerPed* player) {
     info = CWeaponInfo::GetWeaponInfo(weaponType);
     hasPadInHands = InputHandler::HasPadInHands();
     fastReload = CWorld::Players[CWorld::PlayerInFocus].m_bFastReload;
+
+#ifdef GTA3
+    if (configs.thirdPersonRocketLauncher && weaponType == WEAPONTYPE_ROCKETLAUNCHER && player->m_apFrames[6] && player->m_apFrames[6]->m_pFrame) {
+        weaponAtomic = nullptr;
+        RwFrameForAllObjects(player->m_apFrames[6]->m_pFrame, GetWeaponAtomicCB, &weaponAtomic);
+        if (weaponAtomic && weaponAtomic->renderCallBack != RocketRenderCallback) {
+            weaponAtomic->renderCallBack = RocketRenderCallback;
+        }
+    }
+#endif
 
     if (InputHandler::WalkKeyDown()) {
         player->m_fMoveSpeed = 0.0f;
@@ -317,11 +394,7 @@ void Aiming::ProcessPlayerPedControl(CPlayerPed* player) {
         if (mode != MODE_AIMWEAPON && player->IsPedInControl() && TheCamera.m_nTransitionState == 0) {
             TheCamera.TakeControl(FindPlayerPed(), MODE_AIMWEAPON, 1, 0);
             TheCamera.m_bLookingAtPlayer = false;
-            Camera::customTransitionSpeedPending = true;
-            previousHorAngle = cam->m_fHorizontalAngle;
-            previousVerAngle = cam->m_fVerticalAngle;
-
-            Camera::modeBeforeAim = mode;
+            SaveCamAnglesAndSetCustomTransition(cam, mode);
         }
 
         targetEntity = player->m_pPointGunAt;
@@ -383,12 +456,17 @@ void Aiming::ProcessPlayerPedControl(CPlayerPed* player) {
         if (player->m_vecMoveSpeed.Magnitude() < 0.01f)
             forceWalkaroundAnim = true;
 
+        armPitch = info->m_bCanAimWithArm ? player->m_fFPSMoveHeading : 0.0f;
+
         player->m_PedIK.MoveLimb(player->m_PedIK.m_sHead, player->m_PedIK.m_sHead.m_fYaw, 0.0f, player->m_PedIK.ms_headInfo);
         player->m_PedIK.MoveLimb(player->m_PedIK.m_sTorso, 0.0f, torsoPitch, player->m_PedIK.ms_torsoInfo);
-        player->m_PedIK.MoveLimb(player->m_PedIK.m_sLowerArm, 0.0f, player->m_fFPSMoveHeading, player->m_PedIK.ms_lowerArmInfo);
+        player->m_PedIK.MoveLimb(player->m_PedIK.m_sLowerArm, 0.0f, armPitch, player->m_PedIK.ms_lowerArmInfo);
 
 #ifdef GTA3
-        anim = RpAnimBlendClumpGetAssociation(player->m_pRwClump, info->m_nAnimToPlay);
+        animToPlay2 = ANIM_MAN_RBLOCK_CSHOOT;
+        animToPlay = info->m_nAnimToPlay;
+        groupId = ANIM_GROUP_MAN;
+        anim = RpAnimBlendClumpGetAssociation(player->m_pRwClump, animToPlay);
         animRel = NULL;
 #else
         anim = RpAnimBlendClumpGetAssociation(player->m_pRwClump, ANIM_UNARMED_PUNCHR);
@@ -414,7 +492,21 @@ void Aiming::ProcessPlayerPedControl(CPlayerPed* player) {
         if (animRel)
             point = true;
 
-        if (point) {
+#ifndef GTA3
+        animToPlay2 = ANIM_UNARMED_KICK_FLOOR;
+        animToPlay = ANIM_UNARMED_PUNCHR;
+        groupId = info->m_nAnimToPlay;
+#endif
+
+        assoc = NULL;
+        if (player->bCrouchWhenShooting && player->bIsDucking) {
+            assoc = RpAnimBlendClumpGetAssociation(player->m_pRwClump, animToPlay2);
+        }
+        else {
+            assoc = RpAnimBlendClumpGetAssociation(player->m_pRwClump, animToPlay);
+        }
+
+        if (point || !assoc || assoc->m_fBlendDelta < 0.0f) {
             if (player->m_ePedState != PEDSTATE_AIMGUN) {
                 if (player->m_ePedState != PEDSTATE_ATTACK)
                     player->SetStoredState();
@@ -422,38 +514,36 @@ void Aiming::ProcessPlayerPedControl(CPlayerPed* player) {
                 player->m_ePedState = PEDSTATE_AIMGUN;
                 player->bIsPointingGunAt = true;
                 player->SetMoveState(PEDMOVE_STILL);
+            }
 
-#ifdef GTA3
-                animToPlay2 = ANIM_MAN_RBLOCK_CSHOOT;
-                animToPlay = info->m_nAnimToPlay;
-                groupId = ANIM_GROUP_MAN;
-#else
-                animToPlay2 = ANIM_UNARMED_KICK_FLOOR;
-                animToPlay = ANIM_UNARMED_PUNCHR;
-                groupId = info->m_nAnimToPlay;
-#endif
-
-                assoc = NULL;
+            if (!assoc || assoc->m_fBlendDelta < 0.0f) {
                 if (player->bCrouchWhenShooting && player->bIsDucking) {
-                    assoc = RpAnimBlendClumpGetAssociation(player->m_pRwClump, animToPlay2);
+                    assoc = CAnimManager::BlendAnimation(player->m_pRwClump, groupId, animToPlay2, 4.0f);
                 }
                 else {
-                    assoc = RpAnimBlendClumpGetAssociation(player->m_pRwClump, animToPlay);
+                    assoc = CAnimManager::AddAnimation(player->m_pRwClump, groupId, animToPlay);
                 }
 
-                if (!assoc || assoc->m_fBlendDelta < 0.0f) {
-                    if (player->bCrouchWhenShooting && player->bIsDucking) {
-                        assoc = CAnimManager::BlendAnimation(player->m_pRwClump, groupId, animToPlay2, 4.0f);
-                    }
-                    else {
-                        assoc = CAnimManager::AddAnimation(player->m_pRwClump, groupId, animToPlay);
-                    }
-
-                    assoc->m_fBlendAmount = 0.0f;
-                    assoc->m_fBlendDelta = 8.0f;
-                }
+                assoc->m_fBlendAmount = 0.0f;
+                assoc->m_fBlendDelta = 8.0f;
+#ifdef GTA3
+                assoc->SetCurrentTime(info->m_fAnimLoopStart);
+                assoc->m_nFlags &= ~ASSOC_RUNNING;
+#endif
             }
         }
+
+#ifdef GTA3
+        if (assoc) {
+            if (!pad->GetWeapon() && player->m_ePedState != PEDSTATE_ATTACK && assoc->m_fCurrentTime >= info->m_fAnimLoopStart) {
+                assoc->SetCurrentTime(info->m_fAnimLoopStart);
+                assoc->m_nFlags &= ~ASSOC_RUNNING;
+            }
+            else if (pad->GetWeapon() || player->m_ePedState == PEDSTATE_ATTACK) {
+                assoc->m_nFlags |= ASSOC_RUNNING;
+            }
+        }
+#endif
 
         wasPointingGun = true;
 
@@ -493,10 +583,7 @@ void Aiming::ProcessPlayerPedControl(CPlayerPed* player) {
             if (mode != Camera::modeBeforeAim && !pad->DisablePlayerControls && player->IsPedInControl()) {
                 TheCamera.TakeControl(FindPlayerPed(), Camera::modeBeforeAim, 1, 0);
                 TheCamera.m_bLookingAtPlayer = true;
-                Camera::customTransitionSpeedPending = true;
-                previousHorAngle = cam->m_fHorizontalAngle;
-                previousVerAngle = cam->m_fVerticalAngle;
-                Camera::modeBeforeAim = mode;
+                SaveCamAnglesAndSetCustomTransition(cam, mode);
             }
             wasPointingGun = false;
         }
@@ -629,7 +716,7 @@ void Aiming::ResetWeaponInfo(CPlayerPed* ped) {
     if (!wantsToResetWeaponInfo)
         return;
 
-    memcpy(&aWeaponInfo, backupWeaponInfo, sizeof(CWeaponInfo) * WEAPONTYPE_HELICANNON);
+    memcpy(&aWeaponInfo, backupWeaponInfo, sizeof(CWeaponInfo) * (WEAPONTYPE_HELICANNON + 1));
     wantsToResetWeaponInfo = false;
 }
 
@@ -646,13 +733,11 @@ void __fastcall Aiming::ClearAimFlag(CPed* playa, int) {
 }
 
 void Aiming::OnDucking(CPed* ped, int, __int16) {
-    const eWeaponType weaponType = ped->m_aWeapons[ped->m_nCurrentWeapon].m_eWeaponType;
     CWeaponInfo* info;
 
-    if (ped != FindPlayerPed())
+    info = GetPlayerWeaponInfoIfControlled(ped);
+    if (!info)
         return;
-
-    info = CWeaponInfo::GetWeaponInfo(weaponType);
 
     if (!info->m_bCrouchFire && !IsTypeMelee(ped)) {
         ped->bCrouchWhenShooting = false;
@@ -669,13 +754,11 @@ void Aiming::OnClearDuck(CPed* ped, char) {
 }
 
 void Aiming::OnFindingNewLockOnTarget(CPlayerPed* ped) {
-    const eWeaponType weaponType = ped->m_aWeapons[ped->m_nCurrentWeapon].m_eWeaponType;
     CWeaponInfo* info;
 
-    if (ped != FindPlayerPed())
+    info = GetPlayerWeaponInfoIfControlled(ped);
+    if (!info)
         return;
-
-    info = CWeaponInfo::GetWeaponInfo(weaponType);
 
     if (!(!ped->bIsDucking || info->m_bCrouchFire)) {
         ped->ClearPointGunAt();

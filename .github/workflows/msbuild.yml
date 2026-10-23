@@ -118,8 +118,7 @@ jobs:
         $ref = '${{ github.ref }}'
         $refType = '${{ github.ref_type }}'
         $refName = '${{ github.ref_name }}'
-        $isRewrite = ($refName -eq 'rewrite' -or $ref -like '*/rewrite')
-        $projectName = if ($isRewrite) { "ClassicAxisRemake" } else { "ClassicAxis" }
+        $projectName = "ClassicAxis"
 
         if ($refType -eq 'tag' -or $ref -like 'refs/tags/*') {
             $rawTag = if ($refName -and $refName -notlike 'refs/tags/*') { $refName } else { $ref -replace '^refs/tags/', '' }
@@ -134,7 +133,7 @@ jobs:
             $now = Get-Date
             $ddmmyyyy_hhmmss = $now.ToString("ddMMyyyy_HHmmss")
             $dateFormatted = $now.ToString("dd/MM/yyyy") + " at " + $now.ToString("HH:mm:ss")
-            $tagId = if ($isRewrite) { "remake_$ddmmyyyy_hhmmss" } else { "build_$ddmmyyyy_hhmmss" }
+            $tagId = "build_$ddmmyyyy_hhmmss"
             $name = "$projectName Build $ddmmyyyy_hhmmss"
             $body = "Github Actions triggered build on $dateFormatted for branch $($refName)."
             $artifactName = "${projectName}_$ddmmyyyy_hhmmss"

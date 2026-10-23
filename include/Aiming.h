@@ -11,9 +11,13 @@ public:
     static bool ignoreRotation, forceWalkaroundAnim;
     static CPed* thirdPersonMouseTarget;
 
+    static bool weaponInfoSet;
+
 #ifdef GTA3
-    static bool wantsToResetWeaponInfo, weaponInfoSet;
+    static bool wantsToResetWeaponInfo;
     static CWeaponInfo backupWeaponInfo[WEAPONTYPE_HELICANNON + 1];
+    static RwMatrix rocketAimRelativeMatrix;
+    static void UpdateRocketAimAdjustment(float pitch, float yaw, float roll, float offX, float offY, float offZ);
 #endif
 
     static void Clear();

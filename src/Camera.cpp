@@ -13,10 +13,13 @@
 short Camera::modeBeforeAim = 0;
 short Camera::tempFiringCamMode = -1;
 bool Camera::customTransitionSpeedPending = false;
+static CVector tempCamFront;
+static bool tempCamFrontSaved = false;
 
 void Camera::Clear() {
     customTransitionSpeedPending = false;
     tempFiringCamMode = -1;
+    tempCamFrontSaved = false;
 
     if (!CamNew)
         CamNew = std::make_unique<CCamNew>();
@@ -52,14 +55,65 @@ int __fastcall Camera::GetPlayerShootingDirection(int, int) {
     return moveType;
 }
 
-void Camera::OnFiringBefore(CWeapon*, CEntity*, CVector*) {
+void Camera::OnFiringBefore(CWeapon* weapon, CEntity*, CVector* vector) {
+    CCam* cam;
+    CWeaponInfo* info;
+    CPlayerPed* player;
+    CVector source, target, spawnPos, dir;
+    CColPoint colPoint;
+    CEntity* colEntity;
+    float range;
+
     if (tempFiringCamMode == -1) {
         tempFiringCamMode = TheCamera.m_asCams[TheCamera.m_nActiveCam].m_nCamMode;
         TheCamera.m_asCams[TheCamera.m_nActiveCam].m_nCamMode = MODE_FOLLOW_PED;
     }
+
+    if (weapon && weapon->m_eWeaponType == WEAPONTYPE_ROCKETLAUNCHER && configs.thirdPersonRocketLauncher && Aiming::isAiming) {
+        cam = &TheCamera.m_asCams[TheCamera.m_nActiveCam];
+        player = FindPlayerPed();
+        info = CWeaponInfo::GetWeaponInfo(WEAPONTYPE_ROCKETLAUNCHER);
+        range = (info && info->m_fRange > 50.0f) ? info->m_fRange : 200.0f;
+        colEntity = NULL;
+
+        TheCamera.Find3rdPersonCamTargetVector(range, cam->m_vecSource, source, target);
+
+        CWorld::pIgnoreEntity = player;
+        if (CWorld::ProcessLineOfSight(source, target, colPoint, colEntity, true, true, true, true, false, false, false
+#ifdef GTAVC
+            , false
+#endif
+        )) {
+            if (colEntity != player)
+                target = colPoint.m_vecPoint;
+        }
+        CWorld::pIgnoreEntity = NULL;
+
+        if (player) {
+            if (vector)
+                spawnPos = *vector;
+            else
+                spawnPos = player->GetPosition() + CVector(0.0f, 0.0f, 0.6f) + player->GetForward();
+
+            dir = target - spawnPos;
+            if (dir.Magnitude() > 0.1f)
+                dir.Normalize();
+            else
+                dir = cam->m_vecFront;
+
+            tempCamFront = cam->m_vecFront;
+            tempCamFrontSaved = true;
+            cam->m_vecFront = dir;
+        }
+    }
 }
 
 void Camera::OnFiringAfter(CWeapon*, CEntity*, CVector*) {
+    if (tempCamFrontSaved) {
+        TheCamera.m_asCams[TheCamera.m_nActiveCam].m_vecFront = tempCamFront;
+        tempCamFrontSaved = false;
+    }
+
     if (tempFiringCamMode != -1) {
         TheCamera.m_asCams[TheCamera.m_nActiveCam].m_nCamMode = tempFiringCamMode;
         tempFiringCamMode = -1;
@@ -160,7 +214,7 @@ bool __fastcall Camera::Find3rdPersonCamTargetVector(CCamera* camera, int, float
         return false;
     }
     else {
-        fov = tan(CDraw::ms_fFOV * 0.5f * (M_PI / 180.0f));
+        fov = tan(cam->m_fFOV * 0.5f * (M_PI / 180.0f));
         fov *= GetAspectRatio() / (4.0f / 3.0f);
         x = fov * 2.0f * (camera->m_f3rdPersonCHairMultX - 0.5f);
         y = fov * 2.0f * (0.5f - camera->m_f3rdPersonCHairMultY);
