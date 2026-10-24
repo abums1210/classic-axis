@@ -86,28 +86,114 @@ jobs:
       run: |
         msbuild project_files/classic-axis.sln /p:Configuration="ReleaseIII" /p:Platform="Win32" /m /verbosity:minimal
 
+    - name: Checkout DirectImageRasterizer (Rewrite Branch)
+      if: always() && (github.ref_name == 'rewrite' || github.ref == 'refs/heads/rewrite')
+      uses: actions/checkout@v6
+      with:
+        repository: 'abums1210/DirectImageRasterizer'
+        path: 'DirectImageRasterizer'
+
+    - name: Build DirectImageRasterizer (Rewrite Branch)
+      if: always() && (github.ref_name == 'rewrite' || github.ref == 'refs/heads/rewrite')
+      continue-on-error: true
+      run: |
+        msbuild DirectImageRasterizer/DirectImageRasterizer.sln /p:Configuration="Release" /p:Platform="GTA-VC" /m /verbosity:minimal
+        msbuild DirectImageRasterizer/DirectImageRasterizer.sln /p:Configuration="Release" /p:Platform="GTA3" /m /verbosity:minimal
+
     - name: Package Plugins into Individual Zips
       if: always()
       shell: powershell
       run: |
+        $refName = '${{ github.ref_name }}'
+        $ref = '${{ github.ref }}'
+        $isRewrite = ($refName -eq 'rewrite' -or $ref -like '*/rewrite')
+
         New-Item -ItemType Directory -Force -Path "output/asi"
-        Get-ChildItem -Path "${{ github.workspace }}\mock_gta3\scripts", "${{ github.workspace }}\mock_gtavc\scripts", "${{ github.workspace }}\mock_gtasa\scripts" -Filter *.asi -ErrorAction SilentlyContinue | ForEach-Object {
-            Copy-Item -Path $_.FullName -Destination "output/asi\" -Force
-        }
-        if (Test-Path "output/asi") {
-            Get-ChildItem -Path "output/asi" -Filter *.asi | ForEach-Object {
-                $baseName = $_.BaseName
+
+        if ($isRewrite) {
+            $targets = @(
+                @{
+                    Name = "ClassicAxisVC"
+                    AsiName = "ClassicAxisVC.asi"
+                    IniName = "ClassicAxisVC.ini"
+                    ScriptDir = "${{ github.workspace }}\mock_gtavc\scripts"
+                    DirAsi = "DirectImageRasterizer.VC.asi"
+                },
+                @{
+                    Name = "ClassicAxisIII"
+                    AsiName = "ClassicAxisIII.asi"
+                    IniName = "ClassicAxisIII.ini"
+                    ScriptDir = "${{ github.workspace }}\mock_gta3\scripts"
+                    DirAsi = "DirectImageRasterizer.III.asi"
+                }
+            )
+
+            foreach ($target in $targets) {
+                $baseName = $target.Name
+                $asiSource = Join-Path $target.ScriptDir $target.AsiName
+                if (-not (Test-Path $asiSource)) {
+                    $asiSource = "output/asi/$($target.AsiName)"
+                }
+                if (-not (Test-Path $asiSource)) {
+                    Write-Host "Skipping $baseName because $($target.AsiName) not found."
+                    continue
+                }
+
                 $zipName = "output/asi/$baseName.zip"
                 $stageDir = "output/stage/$baseName"
-                New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
-                Copy-Item -Path $_.FullName -Destination $stageDir -Force
-                $iniFile = "resources/$baseName.ini"
-                if (Test-Path $iniFile) {
-                    Write-Host "Packaging $iniFile into $zipName..."
-                    Copy-Item -Path $iniFile -Destination $stageDir -Force
+                if (Test-Path $stageDir) { Remove-Item -Recurse -Force $stageDir }
+
+                # 1. charlesvercetti_mods/ClassicAxis Remake/crosshairs and shaders
+                $crosshairsDir = Join-Path $stageDir "charlesvercetti_mods/ClassicAxis Remake/crosshairs"
+                $shadersDir = Join-Path $stageDir "charlesvercetti_mods/ClassicAxis Remake/shaders"
+                New-Item -ItemType Directory -Force -Path $crosshairsDir | Out-Null
+                New-Item -ItemType Directory -Force -Path $shadersDir | Out-Null
+
+                if (Test-Path "resources/crosshairs") {
+                    Copy-Item -Path "resources/crosshairs/*" -Destination $crosshairsDir -Recurse -Force
                 }
-                Write-Host "Archiving $($_.Name) and associated files into $zipName..."
+                if (Test-Path "resources/shaders") {
+                    Copy-Item -Path "resources/shaders/*" -Destination $shadersDir -Recurse -Force
+                }
+
+                # 2. scripts/ClassicAxis.asi, .ini, and DirectImageRasterizer.asi
+                $scriptsDir = Join-Path $stageDir "scripts"
+                New-Item -ItemType Directory -Force -Path $scriptsDir | Out-Null
+                Copy-Item -Path $asiSource -Destination $scriptsDir -Force
+
+                $iniSource = "resources/$($target.IniName)"
+                if (Test-Path $iniSource) {
+                    Copy-Item -Path $iniSource -Destination $scriptsDir -Force
+                }
+
+                $dirAsiSource = Join-Path $target.ScriptDir $target.DirAsi
+                if (Test-Path $dirAsiSource) {
+                    Copy-Item -Path $dirAsiSource -Destination $scriptsDir -Force
+                } else {
+                    Write-Warning "Could not find $($target.DirAsi) in $($target.ScriptDir)"
+                }
+
+                Write-Host "Archiving $baseName mod layout into $zipName..."
                 Compress-Archive -Path "$stageDir/*" -DestinationPath $zipName -Force
+            }
+        } else {
+            Get-ChildItem -Path "${{ github.workspace }}\mock_gta3\scripts", "${{ github.workspace }}\mock_gtavc\scripts", "${{ github.workspace }}\mock_gtasa\scripts" -Filter *.asi -ErrorAction SilentlyContinue | ForEach-Object {
+                Copy-Item -Path $_.FullName -Destination "output/asi\" -Force
+            }
+            if (Test-Path "output/asi") {
+                Get-ChildItem -Path "output/asi" -Filter *.asi | ForEach-Object {
+                    $baseName = $_.BaseName
+                    $zipName = "output/asi/$baseName.zip"
+                    $stageDir = "output/stage/$baseName"
+                    New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
+                    Copy-Item -Path $_.FullName -Destination $stageDir -Force
+                    $iniFile = "resources/$baseName.ini"
+                    if (Test-Path $iniFile) {
+                        Copy-Item -Path $iniFile -Destination $stageDir -Force
+                    }
+                    Write-Host "Archiving $($_.Name) and associated files into $zipName..."
+                    Compress-Archive -Path "$stageDir/*" -DestinationPath $zipName -Force
+                }
             }
         }
 
